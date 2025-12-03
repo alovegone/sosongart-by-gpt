@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import Node from './components/Node';
 import Toolbar from './components/Toolbar';
 import TextToolbar from './components/TextToolbar';
@@ -61,6 +61,27 @@ function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      // Skip if typing in an input field
+      if (['INPUT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable) {
+        return;
+      }
+
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        if (selectedNodeIds.length > 0) {
+          setNodes(prev => prev.filter(node => !selectedNodeIds.includes(node.id)));
+          setSelectedNodeIds([]);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedNodeIds]);
 
   const screenToWorld = useCallback((screenX: number, screenY: number): Point => {
     return {
