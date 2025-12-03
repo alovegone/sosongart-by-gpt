@@ -4,7 +4,7 @@ import { Tool } from '../types';
 import { 
   IconHand, IconMousePointer, IconSquare, IconType, IconPencil, 
   IconArrowUpRight, IconPlus, IconCircle, IconTriangle, IconLine,
-  IconImage, IconVideo, IconSparkles
+  IconImage, IconVideo, IconSparkles, IconStar, IconDiamond, IconHexagon, IconPentagon
 } from './Icons';
 
 interface ToolbarProps {
@@ -47,6 +47,10 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
     if (group === 'shapes') {
       if (activeTool === 'circle') return IconCircle;
       if (activeTool === 'triangle') return IconTriangle;
+      if (activeTool === 'star') return IconStar;
+      if (activeTool === 'diamond') return IconDiamond;
+      if (activeTool === 'hexagon') return IconHexagon;
+      if (activeTool === 'pentagon') return IconPentagon;
       return IconSquare;
     }
     if (group === 'connectors') {
@@ -78,6 +82,10 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
         { id: 'rectangle', label: 'Rectangle', icon: IconSquare },
         { id: 'circle', label: 'Circle', icon: IconCircle },
         { id: 'triangle', label: 'Triangle', icon: IconTriangle },
+        { id: 'star', label: 'Star', icon: IconStar },
+        { id: 'diamond', label: 'Diamond', icon: IconDiamond },
+        { id: 'pentagon', label: 'Pentagon', icon: IconPentagon },
+        { id: 'hexagon', label: 'Hexagon', icon: IconHexagon },
       ]
     },
     { id: 'text', icon: IconType, label: 'Text' },

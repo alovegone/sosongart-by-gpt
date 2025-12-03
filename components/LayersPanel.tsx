@@ -1,9 +1,10 @@
+
 import React, { useState } from 'react';
 import { CanvasNode, NodeType } from '../types';
 import { 
   IconType, IconSquare, IconCircle, IconTriangle, 
   IconArrowUpRight, IconLine, IconPencil, IconImage, IconStickyNote,
-  IconArrowBarLeft
+  IconArrowBarLeft, IconStar, IconDiamond, IconPentagon, IconHexagon
 } from './Icons';
 
 interface LayersPanelProps {
@@ -21,6 +22,10 @@ const getIconForType = (type: NodeType) => {
     case 'rectangle': return IconSquare;
     case 'circle': return IconCircle;
     case 'triangle': return IconTriangle;
+    case 'star': return IconStar;
+    case 'diamond': return IconDiamond;
+    case 'pentagon': return IconPentagon;
+    case 'hexagon': return IconHexagon;
     case 'arrow': return IconArrowUpRight;
     case 'line': return IconLine;
     case 'draw': return IconPencil;
@@ -47,6 +52,10 @@ const getNodeName = (node: CanvasNode) => {
     case 'rectangle': return 'Rectangle';
     case 'circle': return 'Circle';
     case 'triangle': return 'Triangle';
+    case 'star': return 'Star';
+    case 'diamond': return 'Diamond';
+    case 'hexagon': return 'Hexagon';
+    case 'pentagon': return 'Pentagon';
     case 'text': return 'Text';
     default: return 'Layer';
   }

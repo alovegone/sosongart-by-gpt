@@ -1,5 +1,5 @@
 
-export type NodeType = 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'arrow' | 'line' | 'draw' | 'image';
+export type NodeType = 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'diamond' | 'hexagon' | 'pentagon' | 'arrow' | 'line' | 'draw' | 'image';
 
 export interface Point {
   x: number;
@@ -31,6 +31,7 @@ export interface CanvasNode {
   strokeColor?: string; // Border color / Text Stroke
   strokeWidth?: number;
   strokeStyle?: 'solid' | 'dashed' | 'dotted';
+  strokeAlign?: 'center' | 'inside' | 'outside';
   opacity?: number;
   aspectRatioLocked?: boolean;
 
@@ -44,4 +45,4 @@ export interface ViewState {
   offsetY: number;
 }
 
-export type Tool = 'select' | 'hand' | 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'pencil' | 'arrow' | 'line' | 'image';
+export type Tool = 'select' | 'hand' | 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'diamond' | 'hexagon' | 'pentagon' | 'pencil' | 'arrow' | 'line' | 'image';

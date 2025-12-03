@@ -71,7 +71,7 @@ function App() {
     }
 
     // 2. Creating
-    if (['rectangle', 'circle', 'triangle', 'arrow', 'line', 'pencil', 'text'].includes(activeTool)) {
+    if (['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon', 'arrow', 'line', 'pencil', 'text'].includes(activeTool)) {
         setIsDrawing(true);
         setDrawingStart(worldPos);
         const id = generateId();
@@ -344,7 +344,7 @@ function App() {
             {selectedNode.type === 'text' && (
                 <TextToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
             )}
-            {['rectangle', 'circle', 'triangle'].includes(selectedNode.type) && (
+            {['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon'].includes(selectedNode.type) && (
                 <ShapeToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
             )}
           </>

@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { CanvasNode } from '../types';
 
@@ -159,7 +160,6 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
   if (node.type === 'text') {
       const isFancyFill = node.fillColor?.includes('gradient') || node.fillColor?.includes('url(');
       
-      // Base styles shared between the ghost div (stroke) and textarea (fill)
       const commonTextStyle: React.CSSProperties = {
           fontFamily: node.fontFamily || 'Inter, sans-serif',
           fontSize: `${node.fontSize || 16}px`,
@@ -173,7 +173,6 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
           boxSizing: 'border-box',
       };
 
-      // 1. Stroke Layer Style (The "Ghost" Div)
       const strokeStyle: React.CSSProperties = {
           ...commonTextStyle,
           color: 'transparent',
@@ -184,7 +183,6 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
           zIndex: 0,
       };
 
-      // 2. Fill Layer Style (The Textarea)
       const fillStyle: React.CSSProperties = {
           ...commonTextStyle,
           backgroundColor: 'transparent',
@@ -219,7 +217,7 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
             className={`absolute top-0 left-0 flex flex-col ${isSelected ? 'ring-1 ring-blue-500 z-20' : 'z-10'}`}
             style={{ 
                 ...baseStyle,
-                cursor: isEditing ? 'text' : 'grab' // Indicate draggable state vs edit state
+                cursor: isEditing ? 'text' : 'grab' 
             }}
             onPointerDown={onMouseDown}
             onDoubleClick={(e) => {
@@ -242,22 +240,15 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
                 className={`w-full h-full ${isEditing ? 'select-text cursor-text' : 'select-none cursor-grab'}`}
                 style={{
                     ...fillStyle,
-                    pointerEvents: isEditing ? 'auto' : 'none' // Disable pointer events when not editing to allow drag
+                    pointerEvents: isEditing ? 'auto' : 'none'
                 }}
                 readOnly={!isEditing}
-                onPointerDown={(e) => {
-                    // Only stop propagation if editing (to allow selection)
-                    // If not editing, let it bubble to container for drag
-                    if (isEditing) e.stopPropagation();
-                }}
-                onPointerMove={(e) => {
-                    if (isEditing) e.stopPropagation();
-                }}
+                onPointerDown={(e) => { if (isEditing) e.stopPropagation(); }}
+                onPointerMove={(e) => { if (isEditing) e.stopPropagation(); }}
                 onBlur={() => setIsEditing(false)}
             />
             {isSelected && (
                  <>
-                    {/* Handles only show when selected */}
                     <ResizeHandle cursor="nwse-resize" position="-top-1.5 -left-1.5" handle="nw" />
                     <ResizeHandle cursor="nesw-resize" position="-top-1.5 -right-1.5" handle="ne" />
                     <ResizeHandle cursor="nesw-resize" position="-bottom-1.5 -left-1.5" handle="sw" />
@@ -271,10 +262,8 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       );
   }
 
-  // 5. Shapes (Rectangle, Circle, Triangle)
-  let shapeClass = 'rounded-md';
-  if (node.type === 'circle') shapeClass = 'rounded-full';
-  
+  // 5. Shapes (Rectangle, Circle, Triangle, Star, Diamond, Hexagon, Pentagon)
+  const isSticky = node.type === 'sticky';
   // Use fillColor for shape background, defaulting to node.color for legacy support
   const fill = node.fillColor || node.color || '#ffffff';
   const stroke = node.strokeColor || 'transparent';
@@ -291,12 +280,51 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
   // SVG Path Definitions
   let svgPath = '';
   if (node.type === 'rectangle' || node.type === 'sticky') svgPath = `M0,0 h${node.width} v${node.height} h-${node.width} z`;
-  if (node.type === 'circle') svgPath = `M${node.width/2},0 A${node.width/2},${node.height/2} 0 1,1 ${node.width/2},${node.height} A${node.width/2},${node.height/2} 0 1,1 ${node.width/2},0`;
-  if (node.type === 'triangle') svgPath = `M${node.width/2},0 L0,${node.height} L${node.width},${node.height} z`;
+  else if (node.type === 'circle') svgPath = `M${node.width/2},0 A${node.width/2},${node.height/2} 0 1,1 ${node.width/2},${node.height} A${node.width/2},${node.height/2} 0 1,1 ${node.width/2},0`;
+  else if (node.type === 'triangle') svgPath = `M${node.width/2},0 L0,${node.height} L${node.width},${node.height} z`;
+  else if (node.type === 'diamond') svgPath = `M${node.width/2},0 L${node.width},${node.height/2} L${node.width/2},${node.height} L0,${node.height/2} z`;
+  else if (node.type === 'star') {
+      const cx = node.width / 2;
+      const cy = node.height / 2;
+      const spikes = 5;
+      const outerRadius = Math.min(node.width, node.height) / 2;
+      const innerRadius = outerRadius / 2.5;
+      let path = "";
+      for (let i = 0; i < spikes * 2; i++) {
+          const r = i % 2 === 0 ? outerRadius : innerRadius;
+          const angle = (Math.PI * i) / spikes - Math.PI / 2;
+          const x = cx + Math.cos(angle) * r;
+          const y = cy + Math.sin(angle) * r;
+          path += (i === 0 ? "M" : "L") + x + "," + y;
+      }
+      svgPath = path + "z";
+  }
+  else if (node.type === 'pentagon') {
+      // 5 points roughly matching a house/pentagon shape inside the box
+      // Top, Right-mid, Bottom-right, Bottom-left, Left-mid
+      const w = node.width;
+      const h = node.height;
+      svgPath = `M${w*0.5},0 L${w},${h*0.38} L${w*0.81},${h} L${w*0.19},${h} L0,${h*0.38} z`;
+  }
+  else if (node.type === 'hexagon') {
+      // Pointy top hexagon
+      const w = node.width;
+      const h = node.height;
+      svgPath = `M${w*0.5},0 L${w},${h*0.25} L${w},${h*0.75} L${w*0.5},${h} L0,${h*0.75} L0,${h*0.25} z`;
+  }
+
+  // Calculate clip path based on shape type
+  // For basic SVG shapes like circle/polygon, using CSS clip-path can be cleaner but path() is robust for all
+  let clipPathValue = undefined;
+  if (node.type === 'circle') clipPathValue = 'circle(50% at 50% 50%)';
+  else if (node.type === 'triangle') clipPathValue = 'polygon(50% 0%, 0% 100%, 100% 100%)';
+  else if (node.type === 'diamond') clipPathValue = 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
+  else if (['star', 'pentagon', 'hexagon'].includes(node.type)) clipPathValue = `path('${svgPath}')`;
+  // Rectangle defaults to none (box model)
 
   return (
     <div
-      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-1 ring-blue-500 z-10' : ''}`}
+      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-1 ring-blue-500 z-10' : ''} ${isSticky ? 'shadow-md' : ''}`}
       style={{ ...baseStyle }}
       onPointerDown={onMouseDown}
     >
@@ -321,9 +349,7 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             zIndex: 1,
-            clipPath: node.type === 'circle' ? 'circle(50% at 50% 50%)' 
-                    : node.type === 'triangle' ? 'polygon(50% 0%, 0% 100%, 100% 100%)' 
-                    : undefined // Rectangle default
+            clipPath: clipPathValue
         }}
       />
 
@@ -351,19 +377,19 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
           </svg>
       )}
 
-      {/* Text Content */}
-      {(node.type === 'sticky' || node.type === 'rectangle' || node.type === 'circle' || node.type === 'triangle') && (
+      {/* Text Content: Only for Sticky Notes now. Removed from basic Shapes. */}
+      {node.type === 'sticky' && (
         <textarea
             value={node.content}
             onChange={handleInput}
-            className={`relative z-10 w-full h-full bg-transparent resize-none border-none outline-none p-4 text-center flex items-center justify-center ${node.type === 'triangle' ? 'pt-12' : ''}`}
+            className={`relative z-10 w-full h-full bg-transparent resize-none border-none outline-none p-4 text-center flex items-center justify-center`}
             style={{ 
                 fontFamily: node.fontFamily || 'Inter, sans-serif',
                 fontSize: `${node.fontSize || 16}px`,
-                color: (node.strokeColor || '#000'), // Fallback text color
+                color: '#1e293b',
                 textAlign: node.textAlign || 'center'
             }}
-            placeholder=""
+            placeholder="Idea..."
         />
       )}
       
