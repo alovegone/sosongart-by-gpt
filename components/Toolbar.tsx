@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Tool } from '../types';
 import { 
@@ -89,7 +90,6 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
       submenu: [
         { id: 'image-upload', label: 'Upload Image', icon: IconImage, meta: 'Ctrl+U' },
         { id: 'video-dummy', label: 'Upload Video (Dev)', icon: IconVideo, disabled: true },
-        { id: 'ai-dummy', label: 'AI Image Gen', icon: IconSparkles, meta: 'A', disabled: true },
       ]
     },
   ];

@@ -150,13 +150,18 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat',
+            // Magic combination for image-fill text with visible decorations:
             WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
-            color: 'transparent' // Fallback
+            WebkitTextFillColor: 'transparent', 
+            // Keep the standard color opaque so text-decoration line remains visible
+            color: '#000000', 
+            // Explicitly set decoration color to be safe
+            textDecorationColor: '#000000',
          });
       } else {
          textStyle.color = node.fillColor || '#000000';
+         textStyle.textDecorationColor = node.fillColor || '#000000';
       }
 
       return (

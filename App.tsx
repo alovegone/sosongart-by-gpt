@@ -3,12 +3,10 @@ import React, { useState, useRef, useCallback } from 'react';
 import Node from './components/Node';
 import Toolbar from './components/Toolbar';
 import TextToolbar from './components/TextToolbar';
-import AIControls from './components/AIControls';
 import LayersPanel from './components/LayersPanel';
 import { IconMinus, IconPlus, IconGrid, IconLayers } from './components/Icons';
 import { CanvasNode, NodeType, Point, Tool, ViewState } from './types';
 import { INITIAL_NODES, COLORS, INITIAL_SCALE, MIN_SCALE, MAX_SCALE } from './constants';
-import { generateBrainstormIdeas } from './services/geminiService';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 const SIDEBAR_WIDTH = 240;
@@ -37,7 +35,6 @@ function App() {
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [drawingStart, setDrawingStart] = useState<Point>({ x: 0, y: 0 });
 
-  const [isGenerating, setIsGenerating] = useState(false);
   const [boardName, setBoardName] = useState("Untitled Board");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -269,51 +266,6 @@ function App() {
   };
 
   const handleUploadImage = () => fileInputRef.current?.click();
-  const handleDeleteNode = () => {
-    if (selectedNodeId) {
-      setNodes(prev => prev.filter(n => n.id !== selectedNodeId));
-      setSelectedNodeId(null);
-    }
-  };
-
-  const handleAIGenerate = async () => {
-      if (!selectedNodeId) return;
-      const node = nodes.find(n => n.id === selectedNodeId);
-      if (!node) return;
-      
-      setIsGenerating(true);
-      try {
-        const ideas = await generateBrainstormIdeas(node);
-        // Distribute ideas in a semi-circle around the node
-        const radius = 250;
-        const angleStep = Math.PI / (ideas.length + 1);
-        
-        const newNodes = ideas.map((idea, index) => {
-            const angle = Math.PI + (index + 1) * angleStep; // Bottom half
-            const dx = Math.cos(angle) * radius;
-            const dy = Math.sin(angle) * radius * 0.8; // flatten slightly
-            
-            return {
-                id: generateId(),
-                type: idea.type,
-                x: node.x + dx + (node.width - 200)/2,
-                y: node.y + dy + node.height + 50,
-                width: 200,
-                height: 200,
-                content: idea.content,
-                color: COLORS[idea.colorKey as keyof typeof COLORS] || COLORS.yellow,
-                textAlign: 'left',
-                fontSize: 16
-            } as CanvasNode;
-        });
-        
-        setNodes(prev => [...prev, ...newNodes]);
-      } catch (err) {
-        console.error("AI Error", err);
-      } finally {
-        setIsGenerating(false);
-      }
-  };
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
   const selectedNodeScreenPos = selectedNode ? worldToScreen(selectedNode.x, selectedNode.y) : null;
@@ -369,9 +321,6 @@ function App() {
               onResizeStart={handleResizeStart}
             />
           ))}
-          {selectedNodeId && selectedNode && !isDragging && !resizeState && selectedNode.type !== 'text' && (
-              <AIControls onGenerate={handleAIGenerate} onDelete={handleDeleteNode} isGenerating={isGenerating} position={selectedNode} />
-          )}
         </div>
       </div>
 

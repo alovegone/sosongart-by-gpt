@@ -63,7 +63,7 @@ const hsvToHex = (h: number, s: number, v: number) => {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
 };
 
-const TabButton = ({ active, onClick, children }: { active: boolean, onClick: () => void, children: React.ReactNode }) => (
+const TabButton = ({ active, onClick, children }: { active: boolean, onClick: () => void, children?: React.ReactNode }) => (
   <button 
     onClick={onClick}
     className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${active ? 'bg-white shadow-sm text-slate-900 ring-1 ring-gray-200' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}
@@ -466,3 +466,4 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
 };
 
 export default TextToolbar;
+    

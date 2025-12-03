@@ -1,3 +1,4 @@
+
 export const COLORS = {
   yellow: '#fef3c7', // amber-100
   blue: '#dbeafe',   // blue-100
@@ -59,7 +60,7 @@ export const INITIAL_NODES = [
     y: 50,
     width: 200,
     height: 200,
-    content: 'Drag the background to pan.\nScroll to zoom.\n\nSelect me and click the "Spark" button!',
+    content: 'Drag the background to pan.\nScroll to zoom.',
     color: COLORS.yellow,
     fontSize: 16,
     textAlign: 'left',
