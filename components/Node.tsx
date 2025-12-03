@@ -175,8 +175,10 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
                 value={node.content}
                 onChange={handleInput}
                 placeholder="Type text..."
-                className="w-full h-full bg-transparent resize-none border-none outline-none overflow-hidden"
+                className="w-full h-full bg-transparent resize-none border-none outline-none overflow-hidden select-text"
                 style={textStyle}
+                // Stop propagation when selected to allow text selection without dragging the node
+                onPointerDown={(e) => isSelected && e.stopPropagation()}
             />
             {isSelected && (
                  <>

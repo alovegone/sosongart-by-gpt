@@ -1,10 +1,9 @@
-
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { CanvasNode } from '../types';
 import { 
   IconChevronDown, IconDotsHorizontal, IconX, 
   IconAlignLeft, IconAlignCenter, IconAlignRight, IconAlignJustify,
-  IconUnderline, IconStrikethrough, IconImage, IconRotateCcw
+  IconUnderline, IconStrikethrough, IconImage, IconPlus, IconMinus, IconPipette
 } from './Icons';
 import { FONTS, FONT_WEIGHTS, FONT_SIZES } from '../constants';
 
@@ -14,16 +13,20 @@ interface TextToolbarProps {
   position: { x: number; y: number };
 }
 
-// --- Robust Color Utils ---
-const hexToHsv = (hex: string) => {
-  if (!hex || hex.includes('url') || hex.includes('gradient')) return { h: 0, s: 0, v: 0 };
+// --- Enhanced Color Utils with Alpha Support ---
+
+// Parse Hex (6 or 8 digits) to HSVA
+const hexToHsva = (hex: string) => {
+  if (!hex || hex.includes('url') || hex.includes('gradient')) return { h: 0, s: 0, v: 0, a: 1 };
   
   hex = hex.replace('#', '');
   if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+  if (hex.length === 4) hex = hex.split('').map(c => c + c).join(''); // short alpha like #F008
   
   const r = parseInt(hex.substring(0, 2), 16) / 255;
   const g = parseInt(hex.substring(2, 4), 16) / 255;
   const b = parseInt(hex.substring(4, 6), 16) / 255;
+  const a = hex.length === 8 ? parseInt(hex.substring(6, 8), 16) / 255 : 1;
 
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   let h = 0, s = 0, v = max;
@@ -38,10 +41,11 @@ const hexToHsv = (hex: string) => {
     }
     h /= 6;
   }
-  return { h: Math.round(h * 360), s: Math.round(s * 100), v: Math.round(v * 100) };
+  return { h: Math.round(h * 360), s: Math.round(s * 100), v: Math.round(v * 100), a };
 };
 
-const hsvToHex = (h: number, s: number, v: number) => {
+// HSVA to Hex (6 or 8 digits)
+const hsvaToHex = (h: number, s: number, v: number, a: number) => {
   s /= 100;
   v /= 100;
   const c = v * s;
@@ -60,7 +64,12 @@ const hsvToHex = (h: number, s: number, v: number) => {
     const hex = Math.round((n + m) * 255).toString(16);
     return hex.length === 1 ? '0' + hex : hex;
   };
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+
+  const alpha = Math.round(a * 255).toString(16);
+  const alphaHex = alpha.length === 1 ? '0' + alpha : alpha;
+
+  // Use 8 digit hex if alpha < 1
+  return (`#${toHex(r)}${toHex(g)}${toHex(b)}` + (a < 1 ? alphaHex : '')).toUpperCase();
 };
 
 const TabButton = ({ active, onClick, children }: { active: boolean, onClick: () => void, children?: React.ReactNode }) => (
@@ -88,58 +97,153 @@ const PRESET_GRADIENTS = [
   'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
 ];
 
+interface GradientStop {
+    id: string;
+    offset: number; // 0 to 100
+    color: string;
+}
+
+const RADIAL_POSITIONS = [
+    { label: 'TL', value: 'top left' }, { label: 'T', value: 'top' }, { label: 'TR', value: 'top right' },
+    { label: 'L', value: 'left' }, { label: 'C', value: 'center' }, { label: 'R', value: 'right' },
+    { label: 'BL', value: 'bottom left' }, { label: 'B', value: 'bottom' }, { label: 'BR', value: 'bottom right' },
+];
+
 const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, position }) => {
   const [activePopup, setActivePopup] = useState<'font' | 'weight' | 'size' | 'color' | 'advanced' | null>(null);
   const [activeFillTab, setActiveFillTab] = useState<'solid' | 'gradient' | 'image'>('solid');
   
-  // Custom Color Picker State
-  const [hsv, setHsv] = useState({ h: 0, s: 0, v: 0 });
-  const [gradAngle, setGradAngle] = useState(135);
+  // Custom Color Picker State (HSVA)
+  const [hsva, setHsva] = useState({ h: 0, s: 0, v: 0, a: 1 });
+  
+  // Gradient State
   const [gradType, setGradType] = useState<'linear' | 'radial'>('linear');
+  const [gradAngle, setGradAngle] = useState(90);
+  const [gradPos, setGradPos] = useState('center');
+  const [gradStops, setGradStops] = useState<GradientStop[]>([
+      { id: '1', offset: 0, color: '#FFFFFF' },
+      { id: '2', offset: 100, color: '#000000' }
+  ]);
+  const [activeStopIndex, setActiveStopIndex] = useState(0);
 
   const toolbarRef = useRef<HTMLDivElement>(null);
   const sbRef = useRef<HTMLDivElement>(null);
+  const gradientBarRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const draggingStopRef = useRef<number | null>(null);
 
-  // Sync state with selected node whenever it changes
+  // Initialize from Node
   useEffect(() => {
     if (!selectedNode.fillColor) return;
     
+    // Simple detection of mode
     if (selectedNode.fillColor.includes('gradient')) {
         setActiveFillTab('gradient');
     } else if (selectedNode.fillColor.includes('url')) {
         setActiveFillTab('image');
     } else {
-        const newHsv = hexToHsv(selectedNode.fillColor.startsWith('#') ? selectedNode.fillColor : '#000000');
-        setHsv(newHsv);
+        const parsedHsva = hexToHsva(selectedNode.fillColor.startsWith('#') ? selectedNode.fillColor : '#000000');
+        // FIX: Preserve existing Hue if the new color is grayscale (S=0).
+        // This prevents the Hue slider from resetting to 0 when selecting white/black/gray.
+        setHsva(prev => ({
+            ...parsedHsva,
+            h: parsedHsva.s === 0 ? prev.h : parsedHsva.h
+        }));
         setActiveFillTab('solid');
     }
   }, [selectedNode.fillColor, selectedNode.id]);
 
+  // Sync Color Picker to Active Gradient Stop
+  useEffect(() => {
+      if (activeFillTab === 'gradient' && gradStops[activeStopIndex]) {
+          const parsedHsva = hexToHsva(gradStops[activeStopIndex].color);
+          setHsva(prev => ({
+              ...parsedHsva,
+              h: parsedHsva.s === 0 ? prev.h : parsedHsva.h
+          }));
+      }
+  }, [activeStopIndex, activeFillTab]); // Intentionally removed gradStops to prevent loops
+
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
-      // Check if click is inside the toolbar or any of its children (including popped out dropdowns)
       if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
         setActivePopup(null);
       }
     };
+    
+    const handleGlobalUp = () => {
+        draggingStopRef.current = null;
+    };
+
+    const handleGlobalMove = (e: MouseEvent) => {
+        if (draggingStopRef.current !== null && gradientBarRef.current) {
+            const rect = gradientBarRef.current.getBoundingClientRect();
+            let newOffset = ((e.clientX - rect.left) / rect.width) * 100;
+            newOffset = Math.max(0, Math.min(100, newOffset));
+            
+            setGradStops(prev => {
+                const newStops = [...prev];
+                if (newStops[draggingStopRef.current!] ) {
+                    newStops[draggingStopRef.current!] = { 
+                        ...newStops[draggingStopRef.current!], 
+                        offset: Math.round(newOffset) 
+                    };
+                }
+                return newStops;
+            });
+        }
+    };
+
     document.addEventListener('mousedown', handleOutsideClick);
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('mouseup', handleGlobalUp);
+    document.addEventListener('mousemove', handleGlobalMove);
+    
+    return () => {
+        document.removeEventListener('mousedown', handleOutsideClick);
+        document.removeEventListener('mouseup', handleGlobalUp);
+        document.removeEventListener('mousemove', handleGlobalMove);
+    };
   }, []);
 
   const handlePointerDown = (e: React.PointerEvent) => e.stopPropagation();
 
-  // Updates color based on HSV
-  const updateColorFromHsv = (newHsv: typeof hsv) => {
-      setHsv(newHsv);
-      const hex = hsvToHex(newHsv.h, newHsv.s, newHsv.v);
-      onUpdateNode({ fillColor: hex });
+  // --- Logic ---
+
+  const buildGradientString = useCallback(() => {
+      const stopsStr = [...gradStops]
+        .sort((a, b) => a.offset - b.offset)
+        .map(s => `${s.color} ${s.offset}%`)
+        .join(', ');
+
+      if (gradType === 'linear') {
+          return `linear-gradient(${gradAngle}deg, ${stopsStr})`;
+      } else {
+          return `radial-gradient(circle at ${gradPos}, ${stopsStr})`;
+      }
+  }, [gradType, gradAngle, gradPos, gradStops]);
+
+  const updateNodeColor = (colorStr: string) => {
+      onUpdateNode({ fillColor: colorStr });
+  };
+
+  const handleColorChange = (newHsva: typeof hsva) => {
+      setHsva(newHsva);
+      const hex = hsvaToHex(newHsva.h, newHsva.s, newHsva.v, newHsva.a);
+      
+      if (activeFillTab === 'solid') {
+          updateNodeColor(hex);
+      } else if (activeFillTab === 'gradient') {
+          const newStops = [...gradStops];
+          if (newStops[activeStopIndex]) {
+              newStops[activeStopIndex] = { ...newStops[activeStopIndex], color: hex };
+              setGradStops(newStops);
+          }
+      }
   };
 
   const handlePresetClick = (hex: string) => {
-      const newHsv = hexToHsv(hex);
-      setHsv(newHsv);
-      onUpdateNode({ fillColor: hex });
+      const newHsva = hexToHsva(hex);
+      handleColorChange(newHsva);
   };
 
   const handleSbChange = (e: React.PointerEvent) => {
@@ -147,25 +251,67 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
     const rect = sbRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    const newHsv = { ...hsv, s: Math.round(x * 100), v: Math.round((1 - y) * 100) };
-    updateColorFromHsv(newHsv);
+    const newHsva = { ...hsva, s: Math.round(x * 100), v: Math.round((1 - y) * 100) };
+    handleColorChange(newHsva);
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        if (evt.target?.result) {
-          const url = evt.target.result as string;
-          onUpdateNode({ fillColor: `url(${url})` });
-        }
-      };
-      reader.readAsDataURL(file);
+  const handleEyeDropper = async () => {
+    if (!('EyeDropper' in window)) return;
+    try {
+        const eyeDropper = new (window as any).EyeDropper();
+        const result = await eyeDropper.open();
+        handleColorChange(hexToHsva(result.sRGBHex));
+    } catch (e) {
+        console.log('EyeDropper cancelled');
     }
   };
 
-  const hexColor = hsvToHex(hsv.h, hsv.s, hsv.v);
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            if (ev.target?.result) {
+                const url = `url('${ev.target.result}')`;
+                updateNodeColor(url);
+            }
+        };
+        reader.readAsDataURL(file);
+    }
+  };
+
+  // Gradient Handlers
+  const handleBarClick = (e: React.MouseEvent) => {
+      if (!gradientBarRef.current) return;
+      if (draggingStopRef.current !== null) return;
+      
+      const rect = gradientBarRef.current.getBoundingClientRect();
+      const offset = Math.round(((e.clientX - rect.left) / rect.width) * 100);
+      const safeOffset = Math.max(0, Math.min(100, offset));
+      
+      const newStop = { id: Math.random().toString(), offset: safeOffset, color: hsvaToHex(hsva.h, hsva.s, hsva.v, hsva.a) };
+      
+      const newStops = [...gradStops, newStop];
+      setGradStops(newStops);
+      setActiveStopIndex(newStops.length - 1);
+  };
+
+  const removeStop = () => {
+      if (gradStops.length <= 2) return;
+      const newStops = gradStops.filter((_, i) => i !== activeStopIndex);
+      setGradStops(newStops);
+      setActiveStopIndex(Math.max(0, activeStopIndex - 1));
+  };
+
+  // Apply gradient update whenever state changes
+  useEffect(() => {
+      if (activeFillTab === 'gradient' && activePopup === 'color') {
+          updateNodeColor(buildGradientString());
+      }
+  }, [gradType, gradAngle, gradPos, gradStops]); // eslint-disable-line
+
+  const hexColor = hsvaToHex(hsva.h, hsva.s, hsva.v, 1); // No alpha for preview
+  const fullHexColor = hsvaToHex(hsva.h, hsva.s, hsva.v, hsva.a);
 
   return (
     <div 
@@ -207,114 +353,193 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                     <TabButton active={activeFillTab === 'image'} onClick={() => setActiveFillTab('image')}>图片</TabButton>
                 </div>
 
-                {activeFillTab === 'solid' && (
-                    <div className="flex flex-col gap-3">
-                    {/* HSB Picker */}
-                    <div 
-                        ref={sbRef}
-                        className="w-full h-32 rounded-lg cursor-crosshair relative shadow-inner"
-                        style={{ backgroundColor: `hsl(${hsv.h}, 100%, 50%)` }}
-                        onPointerDown={handleSbChange}
-                        onPointerMove={(e) => e.buttons === 1 && handleSbChange(e)}
-                    >
-                        <div className="absolute inset-0 bg-gradient-to-r from-white to-transparent" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
-                        <div 
-                            className="absolute w-4 h-4 rounded-full border-2 border-white shadow-md transform -translate-x-1/2 -translate-y-1/2 pointer-events-none"
-                            style={{ left: `${hsv.s}%`, top: `${100 - hsv.v}%`, backgroundColor: hexColor }}
-                        />
-                    </div>
-
-                    {/* Hue Slider */}
-                    <div className="flex items-center gap-3">
-                            <button className="w-6 h-6 rounded-full border border-gray-200" style={{ backgroundColor: hexColor }}></button>
-                            <input 
-                                type="range" min="0" max="360"
-                                value={hsv.h}
-                                onChange={(e) => updateColorFromHsv({ ...hsv, h: parseInt(e.target.value) })}
-                                className="flex-1 h-3 rounded-full cursor-pointer appearance-none"
-                                style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }}
-                            />
-                    </div>
-
-                    {/* Hex Input */}
-                    <div className="flex gap-2 items-center mt-1">
-                        <div className="flex-1 flex items-center bg-slate-50 border border-gray-200 rounded px-2 py-1">
-                            <span className="text-slate-400 text-xs mr-2">#</span>
-                            <input 
-                                value={hexColor.replace('#', '')}
-                                onChange={(e) => {
-                                    const newHex = '#' + e.target.value;
-                                    if (/^#[0-9A-F]{6}$/i.test(newHex)) {
-                                        handlePresetClick(newHex);
-                                    }
-                                }}
-                                className="w-full bg-transparent text-sm font-medium outline-none text-slate-700 uppercase"
-                            />
-                        </div>
-                        <div className="flex items-center bg-slate-50 border border-gray-200 rounded px-2 py-1 w-20">
-                            <input 
-                                type="number" min="0" max="100" value={100} readOnly
-                                className="w-full bg-transparent text-sm font-medium outline-none text-slate-700 text-right pr-1"
-                            />
-                            <span className="text-slate-400 text-xs">%</span>
-                        </div>
-                    </div>
-
-                    <hr className="border-gray-100 my-1"/>
-
-                    {/* Presets */}
-                    <div className="grid grid-cols-10 gap-2">
-                        {PRESET_COLORS.map(c => (
-                            <button 
-                                key={c}
-                                onClick={() => handlePresetClick(c)}
-                                className="w-5 h-5 rounded-full border border-gray-100 hover:scale-110 transition-transform"
-                                style={{ backgroundColor: c }}
-                            />
-                        ))}
-                    </div>
-                    </div>
-                )}
-
+                {/* GRADIENT EDITOR UI */}
                 {activeFillTab === 'gradient' && (
-                    <div className="flex flex-col gap-3">
-                        <div className="flex gap-2 mb-2">
+                    <div className="flex flex-col gap-3 mb-4">
+                        {/* Type Toggle */}
+                        <div className="flex gap-2">
                             <button 
                                 onClick={() => setGradType('linear')}
-                                className={`flex-1 py-1 text-xs rounded border ${gradType === 'linear' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-gray-200 text-slate-600'}`}
+                                className={`flex-1 py-1 text-xs rounded border transition-colors ${gradType === 'linear' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-medium' : 'border-gray-200 text-slate-600 hover:bg-slate-50'}`}
                             >
-                                Linear
+                                线性 (Linear)
                             </button>
                             <button 
                                 onClick={() => setGradType('radial')}
-                                className={`flex-1 py-1 text-xs rounded border ${gradType === 'radial' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-gray-200 text-slate-600'}`}
+                                className={`flex-1 py-1 text-xs rounded border transition-colors ${gradType === 'radial' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-medium' : 'border-gray-200 text-slate-600 hover:bg-slate-50'}`}
                             >
-                                Radial
+                                径向 (Radial)
                             </button>
                         </div>
-                        
+
+                        {/* Gradient Slider Bar */}
+                        <div className="h-8 flex items-center gap-2 select-none">
+                            <div 
+                                ref={gradientBarRef}
+                                className="relative flex-1 h-4 rounded-full shadow-inner border border-gray-200 cursor-crosshair" 
+                                style={{ background: `linear-gradient(to right, ${[...gradStops].sort((a,b) => a.offset - b.offset).map(s => `${s.color} ${s.offset}%`).join(', ')})` }}
+                                onClick={handleBarClick}
+                            >
+                                {gradStops.map((stop, idx) => (
+                                    <div 
+                                        key={stop.id}
+                                        onMouseDown={(e) => { e.stopPropagation(); setActiveStopIndex(idx); draggingStopRef.current = idx; }}
+                                        className={`absolute w-4 h-4 rounded-full border-2 cursor-grab shadow-sm transform -translate-x-1/2 top-0 ${activeStopIndex === idx ? 'border-indigo-600 scale-125 z-10' : 'border-white z-0'}`}
+                                        style={{ left: `${stop.offset}%`, backgroundColor: stop.color }}
+                                    />
+                                ))}
+                            </div>
+                            <button onClick={removeStop} className="p-1 rounded hover:bg-slate-100 text-slate-500 disabled:opacity-30" disabled={gradStops.length <= 2} title="Remove Stop"><IconMinus className="w-3 h-3"/></button>
+                        </div>
+
+                        {/* Linear Controls: Angle */}
                         {gradType === 'linear' && (
                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-slate-500">Angle</span>
+                                <span className="text-xs text-slate-500 w-8">旋转</span>
                                 <input 
                                     type="range" min="0" max="360" value={gradAngle} 
                                     onChange={(e) => setGradAngle(parseInt(e.target.value))}
-                                    className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                    className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                                 />
-                                <span className="text-xs text-slate-700 w-8 text-right">{gradAngle}°</span>
+                                <div className="flex items-center bg-slate-50 border border-gray-200 rounded px-1 w-12">
+                                    <input 
+                                        type="number" value={gradAngle}
+                                        onChange={(e) => setGradAngle(parseInt(e.target.value))}
+                                        className="w-full bg-transparent text-xs outline-none text-right"
+                                    />
+                                    <span className="text-[10px] text-slate-400 ml-0.5">°</span>
+                                </div>
                             </div>
                         )}
 
-                        <div className="grid grid-cols-4 gap-2 mt-2">
-                            {PRESET_GRADIENTS.map((g, i) => (
-                                <button
-                                    key={i}
-                                    className="w-full h-8 rounded-md border border-gray-200 shadow-sm"
-                                    style={{ background: g }}
-                                    onClick={() => onUpdateNode({ fillColor: g })}
+                        {/* Radial Controls: Position */}
+                        {gradType === 'radial' && (
+                            <div className="flex flex-col gap-1">
+                                <span className="text-xs text-slate-500">位置 (Position)</span>
+                                <div className="grid grid-cols-3 gap-1 w-24 mx-auto">
+                                    {RADIAL_POSITIONS.map(pos => (
+                                        <button 
+                                            key={pos.value}
+                                            onClick={() => setGradPos(pos.value)}
+                                            className={`w-full aspect-square rounded text-[9px] border flex items-center justify-center ${gradPos === pos.value ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-gray-200 text-slate-400 hover:bg-slate-50'}`}
+                                        >
+                                            {pos.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* COLOR PICKER (SHARED for Solid & Gradient) */}
+                {activeFillTab !== 'image' && (
+                    <div className="flex flex-col gap-3">
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs font-semibold text-slate-500">
+                                {activeFillTab === 'gradient' ? `Color Stop ${activeStopIndex + 1}` : '颜色 (Color)'}
+                            </span>
+                        </div>
+
+                        {/* HSB Picker */}
+                        <div 
+                            ref={sbRef}
+                            className="w-full h-32 rounded-lg cursor-crosshair relative shadow-inner ring-1 ring-black/5"
+                            style={{ backgroundColor: `hsl(${hsva.h}, 100%, 50%)` }}
+                            onPointerDown={handleSbChange}
+                            onPointerMove={(e) => e.buttons === 1 && handleSbChange(e)}
+                        >
+                            <div className="absolute inset-0 bg-gradient-to-r from-white to-transparent" />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
+                            <div 
+                                className="absolute w-4 h-4 rounded-full border-2 border-white shadow-md transform -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                                style={{ left: `${hsva.s}%`, top: `${100 - hsva.v}%`, backgroundColor: hexColor }}
+                            />
+                        </div>
+
+                        {/* Sliders */}
+                        <div className="flex items-center gap-3">
+                                {('EyeDropper' in window) && (
+                                    <button onClick={handleEyeDropper} className="text-slate-500 hover:text-slate-800" title="Pick Color from Screen">
+                                        <IconPipette className="w-4 h-4" />
+                                    </button>
+                                )}
+                                <div className="flex-1 flex flex-col gap-2">
+                                    {/* Hue */}
+                                    <input 
+                                        type="range" min="0" max="360" step="1"
+                                        value={hsva.h}
+                                        onChange={(e) => handleColorChange({ ...hsva, h: parseInt(e.target.value) })}
+                                        className="w-full h-3 rounded-full cursor-pointer appearance-none"
+                                        style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }}
+                                    />
+                                    {/* Opacity */}
+                                    <div className="w-full h-3 relative rounded-full">
+                                        <div 
+                                            className="absolute inset-0 rounded-full overflow-hidden" 
+                                            style={{ 
+                                                backgroundImage: "url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAIklEQVQIW2NkQAKrVq36zwjjgzhhYWGMYAEYB8RmROaABADeOQ8CXl/xfgAAAABJRU5ErkJggg==')"
+                                            }}
+                                        >
+                                            <div 
+                                                className="absolute inset-0"
+                                                style={{ background: `linear-gradient(to right, transparent, ${hexColor})` }}
+                                            />
+                                        </div>
+                                        <input 
+                                            type="range" min="0" max="100" step="1"
+                                            value={Math.round(hsva.a * 100)}
+                                            onChange={(e) => handleColorChange({ ...hsva, a: parseInt(e.target.value) / 100 })}
+                                            className="absolute inset-0 w-full h-full cursor-pointer z-10 opacity-100" 
+                                        />
+                                    </div>
+                                </div>
+                        </div>
+
+                        {/* Hex Input */}
+                        <div className="flex gap-2 items-center">
+                            <div className="flex-1 flex items-center bg-slate-50 border border-gray-200 rounded px-2 py-1.5 focus-within:ring-1 focus-within:ring-indigo-500">
+                                <span className="text-slate-400 text-xs mr-2 select-none">#</span>
+                                <input 
+                                    value={fullHexColor.replace('#', '')}
+                                    onChange={(e) => {
+                                        const newHex = '#' + e.target.value;
+                                        // Match 6 or 8 digit hex
+                                        if (/^#[0-9A-F]{6}([0-9A-F]{2})?$/i.test(newHex)) handlePresetClick(newHex);
+                                    }}
+                                    className="w-full bg-transparent text-sm font-medium outline-none text-slate-700 uppercase"
                                 />
-                            ))}
+                            </div>
+                            <div className="flex items-center bg-slate-50 border border-gray-200 rounded px-2 py-1.5 w-20">
+                                <input 
+                                    type="number" min="0" max="100" 
+                                    value={Math.round(hsva.a * 100)}
+                                    onChange={(e) => handleColorChange({ ...hsva, a: parseInt(e.target.value) / 100 })}
+                                    className="w-full bg-transparent text-sm font-medium outline-none text-slate-700 text-right pr-1"
+                                />
+                                <span className="text-slate-400 text-xs select-none">%</span>
+                            </div>
+                        </div>
+
+                        <hr className="border-gray-100 my-1"/>
+
+                        {/* Presets */}
+                        <div>
+                             <div className="flex justify-between mb-2">
+                                <span className="text-xs text-slate-400">预设 (Presets)</span>
+                                <span className="text-xs text-slate-300 hover:text-indigo-600 cursor-pointer">更多</span>
+                             </div>
+                             <div className="grid grid-cols-10 gap-1.5">
+                                {(activeFillTab === 'solid' ? PRESET_COLORS : PRESET_COLORS).slice(0, 10).map((c, i) => (
+                                    <button 
+                                        key={i}
+                                        onClick={() => handlePresetClick(c)}
+                                        className="w-5 h-5 rounded-full border border-gray-100 shadow-sm hover:scale-110 transition-transform hover:shadow-md ring-1 ring-black/5"
+                                        style={{ background: c }}
+                                        title={c}
+                                    />
+                                ))}
+                             </div>
                         </div>
                     </div>
                 )}
@@ -466,4 +691,3 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
 };
 
 export default TextToolbar;
-    

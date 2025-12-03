@@ -40,11 +40,33 @@
       /* Custom Range Slider Styling */
       input[type=range] {
         -webkit-appearance: none; 
-        background: transparent; 
+        background: transparent;
+        margin: 0;
+        cursor: pointer;
       }
       
+      /* Webkit (Chrome, Safari, Edge) Thumb */
       input[type=range]::-webkit-slider-thumb {
         -webkit-appearance: none;
+        height: 14px;
+        width: 14px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #e2e8f0; /* slate-200 */
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        cursor: pointer;
+        margin-top: -1px; /* Slight adjustment if needed */
+      }
+
+      /* Firefox Thumb */
+      input[type=range]::-moz-range-thumb {
+        height: 14px;
+        width: 14px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #e2e8f0;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        cursor: pointer;
       }
 
       input[type=range]:focus {
