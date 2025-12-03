@@ -4,7 +4,7 @@ import { Tool } from '../types';
 import { 
   IconHand, IconMousePointer, IconSquare, IconType, IconPencil, 
   IconArrowUpRight, IconPlus, IconCircle, IconTriangle, IconLine,
-  IconImage, IconVideo, IconSparkles, IconStar, IconDiamond, IconHexagon, IconPentagon
+  IconImage, IconVideo, IconSparkles, IconStar, IconDiamond, IconHexagon, IconPentagon, IconPenTool
 } from './Icons';
 
 interface ToolbarProps {
@@ -57,6 +57,10 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
       if (activeTool === 'line') return IconLine;
       return IconArrowUpRight;
     }
+    if (group === 'draw') {
+        if (activeTool === 'pen') return IconPenTool;
+        return IconPencil;
+    }
     return defaultIcon;
   };
 
@@ -89,7 +93,16 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
       ]
     },
     { id: 'text', icon: IconType, label: 'Text' },
-    { id: 'pencil', icon: IconPencil, label: 'Draw' },
+    { 
+        id: 'drawing',
+        group: 'draw', 
+        icon: IconPencil, 
+        label: 'Draw',
+        submenu: [
+            { id: 'pencil', label: 'Pencil', icon: IconPencil },
+            { id: 'pen', label: 'Pen Tool', icon: IconPenTool },
+        ]
+    },
     { id: 'divider' },
     { 
       id: 'insert', 

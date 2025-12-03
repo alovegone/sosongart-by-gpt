@@ -262,7 +262,7 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       );
   }
 
-  // 5. Shapes (Rectangle, Circle, Triangle, Star, Diamond, Hexagon, Pentagon)
+  // 5. Shapes (Rectangle, Circle, Triangle, Star, Diamond, Hexagon, Pentagon, Path)
   const isSticky = node.type === 'sticky';
   // Use fillColor for shape background, defaulting to node.color for legacy support
   const fill = node.fillColor || node.color || '#ffffff';
@@ -300,27 +300,29 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       svgPath = path + "z";
   }
   else if (node.type === 'pentagon') {
-      // 5 points roughly matching a house/pentagon shape inside the box
-      // Top, Right-mid, Bottom-right, Bottom-left, Left-mid
       const w = node.width;
       const h = node.height;
       svgPath = `M${w*0.5},0 L${w},${h*0.38} L${w*0.81},${h} L${w*0.19},${h} L0,${h*0.38} z`;
   }
   else if (node.type === 'hexagon') {
-      // Pointy top hexagon
       const w = node.width;
       const h = node.height;
       svgPath = `M${w*0.5},0 L${w},${h*0.25} L${w},${h*0.75} L${w*0.5},${h} L0,${h*0.75} L0,${h*0.25} z`;
   }
+  else if (node.type === 'path' && node.points) {
+      // Custom Path - points are normalized (0-1)
+      const w = node.width;
+      const h = node.height;
+      svgPath = `M ${node.points[0].x * w} ${node.points[0].y * h} ` + 
+                node.points.slice(1).map(p => `L ${p.x * w} ${p.y * h}`).join(' ') + " z";
+  }
 
   // Calculate clip path based on shape type
-  // For basic SVG shapes like circle/polygon, using CSS clip-path can be cleaner but path() is robust for all
   let clipPathValue = undefined;
   if (node.type === 'circle') clipPathValue = 'circle(50% at 50% 50%)';
   else if (node.type === 'triangle') clipPathValue = 'polygon(50% 0%, 0% 100%, 100% 100%)';
   else if (node.type === 'diamond') clipPathValue = 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
-  else if (['star', 'pentagon', 'hexagon'].includes(node.type)) clipPathValue = `path('${svgPath}')`;
-  // Rectangle defaults to none (box model)
+  else if (['star', 'pentagon', 'hexagon', 'path'].includes(node.type)) clipPathValue = `path('${svgPath}')`;
 
   return (
     <div
@@ -360,24 +362,21 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       {strokeW > 0 && align !== 'outside' && (
           <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 2, pointerEvents: 'none' }}>
               {align === 'inside' ? (
-                  // Inside: Clip stroke to shape path
                   <>
                     <defs>
                         <clipPath id={`clip-${node.id}`}>
                             <path d={svgPath} />
                         </clipPath>
                     </defs>
-                    {/* Double width + clip = inside stroke */}
                     <path d={svgPath} fill="none" stroke={stroke} strokeWidth={strokeW * 2} clipPath={`url(#clip-${node.id})`} vectorEffect="non-scaling-stroke" />
                   </>
               ) : (
-                  // Center: Standard SVG stroke
                   <path d={svgPath} fill="none" stroke={stroke} strokeWidth={strokeW} vectorEffect="non-scaling-stroke" />
               )}
           </svg>
       )}
 
-      {/* Text Content: Only for Sticky Notes now. Removed from basic Shapes. */}
+      {/* Text Content: Only for Sticky Notes now. */}
       {node.type === 'sticky' && (
         <textarea
             value={node.content}

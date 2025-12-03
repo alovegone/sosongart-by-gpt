@@ -57,6 +57,10 @@ function App() {
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [drawingStart, setDrawingStart] = useState<Point>({ x: 0, y: 0 });
 
+  // Pen Tool State
+  const [penPoints, setPenPoints] = useState<Point[]>([]);
+  const [currentPointerPos, setCurrentPointerPos] = useState<Point | null>(null);
+
   const [boardName, setBoardName] = useState("Untitled Board");
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -77,11 +81,18 @@ function App() {
           setSelectedNodeIds([]);
         }
       }
+      
+      // Cancel Pen Drawing
+      if (e.key === 'Escape') {
+          if (activeTool === 'pen') {
+              setPenPoints([]);
+          }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodeIds]);
+  }, [selectedNodeIds, activeTool]);
 
   const screenToWorld = useCallback((screenX: number, screenY: number): Point => {
     return {
@@ -105,14 +116,66 @@ function App() {
     const worldPos = screenToWorld(e.clientX, e.clientY);
 
     // 1. Panning (Middle Mouse OR Hand Tool)
-    // Removed: (activeTool === 'select' && e.target === canvasRef.current) to prevent unwanted panning
     if (activeTool === 'hand' || e.button === 1) {
       setIsPanning(true);
       setDragStart({ x: e.clientX, y: e.clientY });
       return;
     }
 
-    // 2. Box Selection (Select Tool + Click on Canvas)
+    // 2. Pen Tool (Custom Path)
+    if (activeTool === 'pen') {
+        e.stopPropagation();
+        
+        // Check if we are closing the path (click near start)
+        if (penPoints.length > 2) {
+            const start = penPoints[0];
+            const dist = Math.sqrt(Math.pow(worldPos.x - start.x, 2) + Math.pow(worldPos.y - start.y, 2));
+            const threshold = 10 / view.scale; // 10px screen threshold
+
+            if (dist < threshold) {
+                // Close Path & Create Node
+                const xs = penPoints.map(p => p.x);
+                const ys = penPoints.map(p => p.y);
+                const minX = Math.min(...xs);
+                const maxX = Math.max(...xs);
+                const minY = Math.min(...ys);
+                const maxY = Math.max(...ys);
+                const width = maxX - minX;
+                const height = maxY - minY;
+
+                const id = generateId();
+                const newNode: CanvasNode = {
+                    id,
+                    type: 'path',
+                    x: minX,
+                    y: minY,
+                    width,
+                    height,
+                    content: '',
+                    color: '#ffffff',
+                    fillColor: '#dbeafe',
+                    strokeColor: '#3b82f6',
+                    strokeWidth: 2,
+                    // Normalize points to 0-1 range
+                    points: penPoints.map(p => ({
+                        x: (p.x - minX) / width,
+                        y: (p.y - minY) / height
+                    }))
+                };
+                
+                setNodes(prev => [...prev, newNode]);
+                setSelectedNodeIds([id]);
+                setPenPoints([]);
+                // Do not switch tool, let user draw another shape if they want
+                return;
+            }
+        }
+        
+        setPenPoints(prev => [...prev, worldPos]);
+        return;
+    }
+
+    // 3. Box Selection (Select Tool + Click on Canvas)
     if (activeTool === 'select' && e.target === canvasRef.current) {
         if (!e.shiftKey) {
             setSelectedNodeIds([]); // Clear selection if not adding
@@ -123,7 +186,7 @@ function App() {
         return;
     }
 
-    // 3. Creating New Nodes
+    // 4. Creating New Nodes (Shapes, Text, etc.)
     if (['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon', 'arrow', 'line', 'pencil', 'text'].includes(activeTool)) {
         setIsDrawing(true);
         setDrawingStart(worldPos);
@@ -201,6 +264,11 @@ function App() {
 
   const handlePointerMove = (e: React.PointerEvent) => {
     const worldPos = screenToWorld(e.clientX, e.clientY);
+    
+    // Update cursor position for Pen tool rubber banding
+    if (activeTool === 'pen') {
+        setCurrentPointerPos(worldPos);
+    }
 
     // 1. Resizing
     if (resizeState) {
@@ -297,18 +365,6 @@ function App() {
     }
     // 5. Dragging Node(s)
     else if (isDragging && selectedNodeIds.length > 0) {
-      const currentPos = screenToWorld(e.clientX, e.clientY); // Get current world pos
-      // Calculate Delta in World Coordinates
-      // Note: We need to use the screen delta converted to world scale to be precise, 
-      // OR just track world delta.
-      // Simpler: Track world delta from last frame.
-      // But we stored dragStart as screen coordinates in handlePointerDown? 
-      // Actually handleNodePointerDown stored dragStart as RELATIVE point?
-      // Let's check handleNodePointerDown.
-      
-      // FIX: Standardize dragStart to be World Position for multi-drag
-      // In handleNodePointerDown, we will set dragStart to worldPos.
-      
       const dx = worldPos.x - dragStart.x;
       const dy = worldPos.y - dragStart.y;
       
@@ -318,7 +374,7 @@ function App() {
         }
         return node;
       }));
-      setDragStart(worldPos); // Reset drag start to current
+      setDragStart(worldPos);
     }
   };
 
@@ -411,6 +467,9 @@ function App() {
   
   const layoutShiftStyle = { left: isLayersOpen ? `${SIDEBAR_WIDTH + 16}px` : '16px', transition: 'left 0.3s ease-in-out' };
 
+  // Calculate Pen Snap State
+  const isSnapToStart = activeTool === 'pen' && penPoints.length > 2 && currentPointerPos && Math.sqrt(Math.pow(currentPointerPos.x - penPoints[0].x, 2) + Math.pow(currentPointerPos.y - penPoints[0].y, 2)) < (10 / view.scale);
+
   return (
     <div 
       className="w-full h-screen bg-white relative overflow-hidden select-none font-sans"
@@ -432,7 +491,7 @@ function App() {
 
       <div 
         ref={canvasRef}
-        className={`w-full h-full absolute inset-0 ${isPanning ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        className={`w-full h-full absolute inset-0 ${isPanning ? 'cursor-grab active:cursor-grabbing' : activeTool === 'pen' ? 'cursor-crosshair' : ''}`}
         onPointerDown={handlePointerDown}
         onWheel={(e) => {
             if (e.ctrlKey || e.metaKey) {
@@ -452,6 +511,7 @@ function App() {
           {selectionBox && (
               <SelectionBox rect={selectionBox} />
           )}
+          
           {nodes.map(node => (
             <Node
               key={node.id}
@@ -464,6 +524,26 @@ function App() {
               onResizeStart={(e, handle) => handleResizeStart(e, handle, node.id)}
             />
           ))}
+
+          {/* Render Active Pen Path */}
+          {activeTool === 'pen' && penPoints.length > 0 && (
+              <svg className="absolute top-0 left-0 overflow-visible pointer-events-none" style={{ zIndex: 100 }}>
+                <path 
+                    d={`M ${penPoints.map(p => `${p.x} ${p.y}`).join(' L ')} ${currentPointerPos ? `L ${currentPointerPos.x} ${currentPointerPos.y}` : ''}`}
+                    fill="none"
+                    stroke="#3b82f6"
+                    strokeWidth="2"
+                    strokeDasharray="4 2"
+                />
+                {penPoints.map((p, i) => (
+                    <circle key={i} cx={p.x} cy={p.y} r={3/view.scale} fill="#3b82f6" />
+                ))}
+                {isSnapToStart && (
+                    <circle cx={penPoints[0].x} cy={penPoints[0].y} r={8/view.scale} fill="rgba(59, 130, 246, 0.5)" />
+                )}
+              </svg>
+          )}
+
         </div>
       </div>
 
@@ -472,7 +552,7 @@ function App() {
             {primarySelectedNode.type === 'text' && (
                 <TextToolbar selectedNode={primarySelectedNode} onUpdateNode={updateNodeStyle} position={primaryNodeScreenPos} />
             )}
-            {['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon'].includes(primarySelectedNode.type) && (
+            {['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon', 'path'].includes(primarySelectedNode.type) && (
                 <ShapeToolbar selectedNode={primarySelectedNode} onUpdateNode={updateNodeStyle} position={primaryNodeScreenPos} />
             )}
           </>

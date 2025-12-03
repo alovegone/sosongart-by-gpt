@@ -1,5 +1,5 @@
 
-export type NodeType = 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'diamond' | 'hexagon' | 'pentagon' | 'arrow' | 'line' | 'draw' | 'image';
+export type NodeType = 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'diamond' | 'hexagon' | 'pentagon' | 'arrow' | 'line' | 'draw' | 'image' | 'path';
 
 export interface Point {
   x: number;
@@ -45,4 +45,4 @@ export interface ViewState {
   offsetY: number;
 }
 
-export type Tool = 'select' | 'hand' | 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'diamond' | 'hexagon' | 'pentagon' | 'pencil' | 'arrow' | 'line' | 'image';
+export type Tool = 'select' | 'hand' | 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'star' | 'diamond' | 'hexagon' | 'pentagon' | 'pencil' | 'arrow' | 'line' | 'image' | 'pen';
