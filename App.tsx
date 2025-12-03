@@ -20,11 +20,27 @@ interface ResizeState {
     startDims: { width: number; height: number; x: number; y: number; fontSize: number };
 }
 
+// Selection Box Component
+const SelectionBox = ({ rect }: { rect: { x: number, y: number, width: number, height: number } }) => (
+  <div
+    className="absolute border border-indigo-500 bg-indigo-500/10 pointer-events-none z-50"
+    style={{
+      left: rect.x,
+      top: rect.y,
+      width: rect.width,
+      height: rect.height
+    }}
+  />
+);
+
 function App() {
   const [nodes, setNodes] = useState<CanvasNode[]>(INITIAL_NODES as any[]);
   const [view, setView] = useState<ViewState>({ scale: INITIAL_SCALE, offsetX: window.innerWidth / 2, offsetY: window.innerHeight / 2 });
   const [activeTool, setActiveTool] = useState<Tool>('select');
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  
+  // Multi-selection State
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  
   const [isLayersOpen, setIsLayersOpen] = useState(false);
   
   // Interaction State
@@ -32,6 +48,11 @@ function App() {
   const [isPanning, setIsPanning] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
+  
+  // Box Selection State
+  const [isBoxSelecting, setIsBoxSelecting] = useState(false);
+  const [boxStart, setBoxStart] = useState<Point>({ x: 0, y: 0 });
+  const [selectionBox, setSelectionBox] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
   
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
   const [drawingStart, setDrawingStart] = useState<Point>({ x: 0, y: 0 });
@@ -62,15 +83,26 @@ function App() {
 
     const worldPos = screenToWorld(e.clientX, e.clientY);
 
-    // 1. Panning
-    if (activeTool === 'hand' || e.button === 1 || (activeTool === 'select' && e.target === canvasRef.current)) {
+    // 1. Panning (Middle Mouse OR Hand Tool)
+    // Removed: (activeTool === 'select' && e.target === canvasRef.current) to prevent unwanted panning
+    if (activeTool === 'hand' || e.button === 1) {
       setIsPanning(true);
       setDragStart({ x: e.clientX, y: e.clientY });
-      if (activeTool !== 'hand') setSelectedNodeId(null);
       return;
     }
 
-    // 2. Creating
+    // 2. Box Selection (Select Tool + Click on Canvas)
+    if (activeTool === 'select' && e.target === canvasRef.current) {
+        if (!e.shiftKey) {
+            setSelectedNodeIds([]); // Clear selection if not adding
+        }
+        setIsBoxSelecting(true);
+        setBoxStart(worldPos);
+        setSelectionBox({ x: worldPos.x, y: worldPos.y, width: 0, height: 0 });
+        return;
+    }
+
+    // 3. Creating New Nodes
     if (['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon', 'arrow', 'line', 'pencil', 'text'].includes(activeTool)) {
         setIsDrawing(true);
         setDrawingStart(worldPos);
@@ -91,7 +123,7 @@ function App() {
                 fontFamily: 'Inter, sans-serif'
              };
              setNodes(prev => [...prev, newNode]);
-             setSelectedNodeId(id);
+             setSelectedNodeIds([id]);
              setActiveTool('select');
              setIsDrawing(false);
              return;
@@ -122,13 +154,13 @@ function App() {
         }
 
         setNodes(prev => [...prev, newNode]);
-        setSelectedNodeId(id);
+        setSelectedNodeIds([id]);
     }
   };
 
-  const handleResizeStart = (e: React.PointerEvent, handle: string) => {
+  const handleResizeStart = (e: React.PointerEvent, handle: string, nodeId: string) => {
       e.stopPropagation();
-      const node = nodes.find(n => n.id === selectedNodeId);
+      const node = nodes.find(n => n.id === nodeId);
       if (node) {
           setResizeState({
               isResizing: true,
@@ -212,9 +244,10 @@ function App() {
       setDragStart({ x: e.clientX, y: e.clientY });
     } 
     // 3. Drawing
-    else if (isDrawing && selectedNodeId) {
+    else if (isDrawing && selectedNodeIds.length === 1) {
+        const activeId = selectedNodeIds[0];
         setNodes(prev => prev.map(node => {
-            if (node.id !== selectedNodeId) return node;
+            if (node.id !== activeId) return node;
             if (node.type === 'draw') {
                 const newPoint = { x: worldPos.x - node.x, y: worldPos.y - node.y };
                 return { ...node, width: Math.max(node.width, newPoint.x), height: Math.max(node.height, newPoint.y), points: [...(node.points || []), newPoint] };
@@ -233,18 +266,63 @@ function App() {
             };
         }));
     }
-    // 4. Dragging Node
-    else if (isDragging && selectedNodeId) {
+    // 4. Box Selection Updating
+    else if (isBoxSelecting) {
+        const x = Math.min(boxStart.x, worldPos.x);
+        const y = Math.min(boxStart.y, worldPos.y);
+        const width = Math.abs(worldPos.x - boxStart.x);
+        const height = Math.abs(worldPos.y - boxStart.y);
+        setSelectionBox({ x, y, width, height });
+    }
+    // 5. Dragging Node(s)
+    else if (isDragging && selectedNodeIds.length > 0) {
+      const currentPos = screenToWorld(e.clientX, e.clientY); // Get current world pos
+      // Calculate Delta in World Coordinates
+      // Note: We need to use the screen delta converted to world scale to be precise, 
+      // OR just track world delta.
+      // Simpler: Track world delta from last frame.
+      // But we stored dragStart as screen coordinates in handlePointerDown? 
+      // Actually handleNodePointerDown stored dragStart as RELATIVE point?
+      // Let's check handleNodePointerDown.
+      
+      // FIX: Standardize dragStart to be World Position for multi-drag
+      // In handleNodePointerDown, we will set dragStart to worldPos.
+      
+      const dx = worldPos.x - dragStart.x;
+      const dy = worldPos.y - dragStart.y;
+      
       setNodes(prev => prev.map(node => {
-        if (node.id === selectedNodeId) {
-          return { ...node, x: worldPos.x - dragStart.x, y: worldPos.y - dragStart.y };
+        if (selectedNodeIds.includes(node.id)) {
+          return { ...node, x: node.x + dx, y: node.y + dy };
         }
         return node;
       }));
+      setDragStart(worldPos); // Reset drag start to current
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (isBoxSelecting && selectionBox) {
+        // Find intersecting nodes
+        const selected = nodes.filter(node => 
+            node.x < selectionBox.x + selectionBox.width &&
+            node.x + node.width > selectionBox.x &&
+            node.y < selectionBox.y + selectionBox.height &&
+            node.y + node.height > selectionBox.y
+        ).map(n => n.id);
+
+        setSelectedNodeIds(prev => {
+            if (e.shiftKey) {
+                // Add to selection (Union)
+                return Array.from(new Set([...prev, ...selected]));
+            }
+            return selected;
+        });
+        
+        setSelectionBox(null);
+        setIsBoxSelecting(false);
+    }
+
     setResizeState(null);
     setIsPanning(false);
     setIsDragging(false);
@@ -255,13 +333,25 @@ function App() {
   const handleNodePointerDown = (e: React.PointerEvent, nodeId: string) => {
     e.stopPropagation();
     if (activeTool !== 'select') return;
-    setSelectedNodeId(nodeId);
-    setIsDragging(true);
-    const node = nodes.find(n => n.id === nodeId);
-    if (node) {
-        const worldPos = screenToWorld(e.clientX, e.clientY);
-        setDragStart({ x: worldPos.x - node.x, y: worldPos.y - node.y });
+    
+    // Multi-select Logic
+    if (e.shiftKey) {
+        if (selectedNodeIds.includes(nodeId)) {
+            setSelectedNodeIds(prev => prev.filter(id => id !== nodeId));
+            setIsDragging(false); // Don't drag if we just deselected
+            return;
+        } else {
+            setSelectedNodeIds(prev => [...prev, nodeId]);
+        }
+    } else {
+        if (!selectedNodeIds.includes(nodeId)) {
+            setSelectedNodeIds([nodeId]);
+        }
     }
+
+    setIsDragging(true);
+    // Set start point in World Coordinates for drag calculations
+    setDragStart(screenToWorld(e.clientX, e.clientY));
   };
 
   const updateNodeContent = (id: string, content: string) => {
@@ -269,8 +359,8 @@ function App() {
   };
 
   const updateNodeStyle = (updates: Partial<CanvasNode>) => {
-      if (selectedNodeId) {
-          setNodes(prev => prev.map(n => n.id === selectedNodeId ? { ...n, ...updates } : n));
+      if (selectedNodeIds.length > 0) {
+          setNodes(prev => prev.map(n => selectedNodeIds.includes(n.id) ? { ...n, ...updates } : n));
       }
   };
 
@@ -282,8 +372,22 @@ function App() {
 
   const handleUploadImage = () => fileInputRef.current?.click();
 
-  const selectedNode = nodes.find(n => n.id === selectedNodeId);
-  const selectedNodeScreenPos = selectedNode ? worldToScreen(selectedNode.x, selectedNode.y) : null;
+  const handleLayerSelect = (id: string, multi: boolean) => {
+      if (multi) {
+          if (selectedNodeIds.includes(id)) {
+              setSelectedNodeIds(prev => prev.filter(nid => nid !== id));
+          } else {
+              setSelectedNodeIds(prev => [...prev, id]);
+          }
+      } else {
+          setSelectedNodeIds([id]);
+      }
+  };
+
+  // Logic for toolbars: Use the LAST selected node as the "Primary" for reading values
+  const primarySelectedNode = selectedNodeIds.length > 0 ? nodes.find(n => n.id === selectedNodeIds[selectedNodeIds.length - 1]) : null;
+  const primaryNodeScreenPos = primarySelectedNode ? worldToScreen(primarySelectedNode.x, primarySelectedNode.y) : null;
+  
   const layoutShiftStyle = { left: isLayersOpen ? `${SIDEBAR_WIDTH + 16}px` : '16px', transition: 'left 0.3s ease-in-out' };
 
   return (
@@ -296,7 +400,7 @@ function App() {
       <input type="file" ref={fileInputRef} onChange={() => {}} accept="image/*" className="hidden" />
 
       <LayersPanel 
-        nodes={nodes} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId}
+        nodes={nodes} selectedNodeIds={selectedNodeIds} onSelectNode={handleLayerSelect}
         isOpen={isLayersOpen} onClose={() => setIsLayersOpen(false)}
       />
 
@@ -324,28 +428,31 @@ function App() {
         style={{ backgroundColor: '#ffffff' }}
       >
         <div style={{ transform: `translate(${view.offsetX}px, ${view.offsetY}px) scale(${view.scale})`, transformOrigin: '0 0', position: 'absolute' }}>
+          {selectionBox && (
+              <SelectionBox rect={selectionBox} />
+          )}
           {nodes.map(node => (
             <Node
               key={node.id}
               node={node}
-              isSelected={selectedNodeId === node.id}
+              isSelected={selectedNodeIds.includes(node.id)}
               scale={view.scale}
               onMouseDown={(e) => handleNodePointerDown(e, node.id)}
               onChange={updateNodeContent}
               onResize={handleResizeNode}
-              onResizeStart={handleResizeStart}
+              onResizeStart={(e, handle) => handleResizeStart(e, handle, node.id)}
             />
           ))}
         </div>
       </div>
 
-      {selectedNodeId && selectedNode && !isDragging && !resizeState && selectedNodeScreenPos && (
+      {primarySelectedNode && !isDragging && !resizeState && primaryNodeScreenPos && (
           <>
-            {selectedNode.type === 'text' && (
-                <TextToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
+            {primarySelectedNode.type === 'text' && (
+                <TextToolbar selectedNode={primarySelectedNode} onUpdateNode={updateNodeStyle} position={primaryNodeScreenPos} />
             )}
-            {['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon'].includes(selectedNode.type) && (
-                <ShapeToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
+            {['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon'].includes(primarySelectedNode.type) && (
+                <ShapeToolbar selectedNode={primarySelectedNode} onUpdateNode={updateNodeStyle} position={primaryNodeScreenPos} />
             )}
           </>
       )}

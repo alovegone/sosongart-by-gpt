@@ -9,8 +9,8 @@ import {
 
 interface LayersPanelProps {
   nodes: CanvasNode[];
-  selectedNodeId: string | null;
-  onSelectNode: (id: string) => void;
+  selectedNodeIds: string[];
+  onSelectNode: (id: string, multi: boolean) => void;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -61,7 +61,7 @@ const getNodeName = (node: CanvasNode) => {
   }
 };
 
-const LayersPanel: React.FC<LayersPanelProps> = ({ nodes, selectedNodeId, onSelectNode, isOpen, onClose }) => {
+const LayersPanel: React.FC<LayersPanelProps> = ({ nodes, selectedNodeIds, onSelectNode, isOpen, onClose }) => {
   // Reverse nodes to show top layer at the top of the list
   const reversedNodes = [...nodes].reverse();
 
@@ -84,12 +84,12 @@ const LayersPanel: React.FC<LayersPanelProps> = ({ nodes, selectedNodeId, onSele
         ) : (
           reversedNodes.map((node) => {
             const Icon = getIconForType(node.type);
-            const isSelected = selectedNodeId === node.id;
+            const isSelected = selectedNodeIds.includes(node.id);
             
             return (
               <div 
                 key={node.id}
-                onClick={() => onSelectNode(node.id)}
+                onClick={(e) => onSelectNode(node.id, e.shiftKey || e.metaKey || e.ctrlKey)}
                 className={`group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-colors select-none ${
                   isSelected 
                     ? 'bg-indigo-50 text-indigo-700' 
