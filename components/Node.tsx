@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { CanvasNode } from '../types';
 
@@ -271,50 +272,82 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       );
   }
 
-  // 5. Shapes
+  // 5. Shapes (Rectangle, Circle, Triangle)
   let shapeClass = 'rounded-md';
   if (node.type === 'circle') shapeClass = 'rounded-full';
   
-  const isSticky = node.type === 'sticky';
-  const bgColor = node.color || '#ffffff';
+  // Use fillColor for shape background, defaulting to node.color for legacy support
+  const fill = node.fillColor || node.color || '#ffffff';
+  const stroke = node.strokeColor || 'transparent';
+  const strokeW = node.strokeWidth || 0;
   
+  // Shape container styles
+  const commonShapeStyle: React.CSSProperties = {
+      position: 'absolute',
+      inset: 0,
+      width: '100%',
+      height: '100%',
+  };
+
   return (
     <div
-      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-2 ring-blue-500 z-10' : ''} ${isSticky ? 'shadow-md' : ''}`}
+      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-2 ring-blue-500 z-10' : ''}`}
       style={{ ...baseStyle }}
       onPointerDown={onMouseDown}
     >
-      <div 
-        className={`absolute inset-0 w-full h-full ${shapeClass}`} 
-        style={{ 
-            backgroundColor: node.type !== 'triangle' ? bgColor : 'transparent',
-            clipPath: node.type === 'triangle' ? 'polygon(50% 0%, 0% 100%, 100% 100%)' : undefined,
-            border: node.type !== 'triangle' ? '1px solid rgba(0,0,0,0.1)' : 'none'
-        }}
-      >
-        {node.type === 'triangle' && (
-            <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                <polygon points="50,0 0,100 100,100" fill={bgColor} stroke="rgba(0,0,0,0.1)" strokeWidth="1" />
+      {/* 
+         For Rectangle/Circle: standard div with border/background works for most cases.
+         However, to support 'gradient' fills properly along with strokes, standard CSS background + border is fine.
+         Images as fill is also supported via background-image.
+      */}
+      {node.type !== 'triangle' ? (
+          <div 
+            className={`${shapeClass}`}
+            style={{ 
+                ...commonShapeStyle,
+                background: fill,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                border: `${strokeW}px solid ${stroke}`
+            }}
+          />
+      ) : (
+          /* 
+             For Triangle: CSS border/clip-path is tricky with stroke + gradient fill.
+             Layered approach:
+             1. Fill Layer: Div with clip-path (supports gradients/images)
+             2. Stroke Layer: SVG polygon (supports stroke)
+          */
+         <>
+            {/* Fill Layer */}
+            <div 
+                style={{
+                    ...commonShapeStyle,
+                    background: fill,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)'
+                }}
+            />
+            {/* Stroke Layer (SVG Overlay) */}
+            <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                <polygon points="50,0 0,100 100,100" fill="none" stroke={stroke} strokeWidth={strokeW} vectorEffect="non-scaling-stroke" />
             </svg>
-        )}
-      </div>
+         </>
+      )}
 
-      <textarea
-        value={node.content}
-        onChange={handleInput}
-        className={`relative z-10 w-full h-full bg-transparent resize-none border-none outline-none p-4 text-center flex items-center justify-center ${node.type === 'triangle' ? 'pt-12' : ''}`}
-        style={{ 
-            fontFamily: node.fontFamily || 'Inter, sans-serif',
-            fontSize: `${node.fontSize || 16}px`,
-            color: node.fillColor || '#1e293b',
-            textAlign: node.textAlign || 'center'
-        }}
-        placeholder={isSticky ? "Idea..." : ""}
-      />
-      
+      {/* Resize Handles */}
       {isSelected && (
         <>
+            <ResizeHandle cursor="nwse-resize" position="-top-1.5 -left-1.5" handle="nw" />
+            <ResizeHandle cursor="nesw-resize" position="-top-1.5 -right-1.5" handle="ne" />
+            <ResizeHandle cursor="nesw-resize" position="-bottom-1.5 -left-1.5" handle="sw" />
             <ResizeHandle cursor="nwse-resize" position="-bottom-1.5 -right-1.5" handle="se" />
+            
+            <ResizeHandle cursor="ew-resize" position="top-1/2 -right-1.5 -translate-y-1/2" handle="e" />
+            <ResizeHandle cursor="ew-resize" position="top-1/2 -left-1.5 -translate-y-1/2" handle="w" />
+            <ResizeHandle cursor="ns-resize" position="bottom-0 left-1/2 -translate-x-1/2 translate-y-1.5" handle="s" />
+            <ResizeHandle cursor="ns-resize" position="top-0 left-1/2 -translate-x-1/2 -translate-y-1.5" handle="n" />
         </>
       )}
     </div>

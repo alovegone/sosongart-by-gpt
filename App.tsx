@@ -3,6 +3,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import Node from './components/Node';
 import Toolbar from './components/Toolbar';
 import TextToolbar from './components/TextToolbar';
+import ShapeToolbar from './components/ShapeToolbar';
 import LayersPanel from './components/LayersPanel';
 import { IconMinus, IconPlus, IconGrid, IconLayers } from './components/Icons';
 import { CanvasNode, NodeType, Point, Tool, ViewState } from './types';
@@ -103,8 +104,20 @@ function App() {
                 id, type: activeTool, x: worldPos.x, y: worldPos.y, width: 0, height: 0, content: '', color: '#64748b', points: [{ x: 0, y: 0 }, { x: 0, y: 0 }]
              };
         } else {
+            // Shapes default styling
             newNode = {
-                id, type: activeTool as NodeType, x: worldPos.x, y: worldPos.y, width: 0, height: 0, content: '', color: activeTool === 'rectangle' ? COLORS.blue : COLORS.green
+                id, 
+                type: activeTool as NodeType, 
+                x: worldPos.x, 
+                y: worldPos.y, 
+                width: 0, 
+                height: 0, 
+                content: '', 
+                color: '#ffffff', // Default white background
+                fillColor: '#dbeafe', // Default visible color (blue-100)
+                strokeColor: '#94a3b8',
+                strokeWidth: 1,
+                aspectRatioLocked: false
             };
         }
 
@@ -151,30 +164,32 @@ function App() {
             let newY = startDims.y;
             let newFontSize = startDims.fontSize;
 
-            // Simple scaling for non-text
+            // Determine dimensions based on handle
             if (handle.includes('e')) newWidth = startDims.width + dx;
+            if (handle.includes('w')) { newWidth = startDims.width - dx; newX = startDims.x + dx; }
             if (handle.includes('s')) newHeight = startDims.height + dy;
-            if (handle.includes('w')) {
-                newWidth = startDims.width - dx;
-                newX = startDims.x + dx;
-            }
-            if (handle.includes('n')) {
-                newHeight = startDims.height - dy;
-                newY = startDims.y + dy;
+            if (handle.includes('n')) { newHeight = startDims.height - dy; newY = startDims.y + dy; }
+
+            // Apply Aspect Ratio Lock for Shapes/Images
+            if (node.aspectRatioLocked || node.type === 'image') {
+                const ratio = startDims.width / startDims.height;
+                if (handle.includes('e') || handle.includes('w')) {
+                    newHeight = newWidth / ratio;
+                    if (handle.includes('n')) newY = startDims.y + (startDims.height - newHeight);
+                } else {
+                    newWidth = newHeight * ratio;
+                    if (handle.includes('w')) newX = startDims.x + (startDims.width - newWidth);
+                }
             }
 
             // Special logic for Text Scaling
             if (node.type === 'text') {
                 if (handle.length === 2) {
-                    // Corner drag: Scale Font Size
-                    // Ratio based on width change
                     const ratio = newWidth / startDims.width;
                     newFontSize = Math.max(8, startDims.fontSize * ratio);
-                    // Height is auto-calculated by Node component usually, but we can scale it too
                     newHeight = startDims.height * ratio; 
                 } else {
-                    // Side drag: Only change width (Text wraps)
-                    newFontSize = startDims.fontSize; // Keep font size
+                    newFontSize = startDims.fontSize; 
                 }
             }
 
@@ -324,8 +339,15 @@ function App() {
         </div>
       </div>
 
-      {selectedNodeId && selectedNode && !isDragging && !resizeState && selectedNode.type === 'text' && selectedNodeScreenPos && (
-          <TextToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
+      {selectedNodeId && selectedNode && !isDragging && !resizeState && selectedNodeScreenPos && (
+          <>
+            {selectedNode.type === 'text' && (
+                <TextToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
+            )}
+            {['rectangle', 'circle', 'triangle'].includes(selectedNode.type) && (
+                <ShapeToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
+            )}
+          </>
       )}
 
       <Toolbar activeTool={activeTool} onSelectTool={setActiveTool} onUploadImage={handleUploadImage} style={layoutShiftStyle} />

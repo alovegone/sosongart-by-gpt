@@ -1,3 +1,4 @@
+
 export type NodeType = 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'arrow' | 'line' | 'draw' | 'image';
 
 export interface Point {
@@ -31,6 +32,7 @@ export interface CanvasNode {
   strokeWidth?: number;
   strokeStyle?: 'solid' | 'dashed' | 'dotted';
   opacity?: number;
+  aspectRatioLocked?: boolean;
 
   points?: Point[]; // For drawing, arrows, lines
   src?: string;     // For images
