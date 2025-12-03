@@ -4,6 +4,13 @@ export type NodeType = 'sticky' | 'text' | 'rectangle' | 'circle' | 'triangle' |
 export interface Point {
   x: number;
   y: number;
+  // Cubic Bezier Control Points (Relative to x,y)
+  // lcx/lcy: Left/Inbound Control Point
+  // rcx/rcy: Right/Outbound Control Point
+  lcx?: number; 
+  lcy?: number;
+  rcx?: number;
+  rcy?: number;
 }
 
 export interface CanvasNode {
@@ -35,7 +42,7 @@ export interface CanvasNode {
   opacity?: number;
   aspectRatioLocked?: boolean;
 
-  points?: Point[]; // For drawing, arrows, lines
+  points?: Point[]; // For drawing, arrows, lines, paths
   src?: string;     // For images
 }
 

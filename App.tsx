@@ -60,6 +60,8 @@ function App() {
   // Pen Tool State
   const [penPoints, setPenPoints] = useState<Point[]>([]);
   const [currentPointerPos, setCurrentPointerPos] = useState<Point | null>(null);
+  const [isPenDragging, setIsPenDragging] = useState(false);
+  const [activePenPointIndex, setActivePenPointIndex] = useState<number | null>(null);
 
   const [boardName, setBoardName] = useState("Untitled Board");
   
@@ -86,13 +88,19 @@ function App() {
       if (e.key === 'Escape') {
           if (activeTool === 'pen') {
               setPenPoints([]);
+              setActivePenPointIndex(null);
           }
+      }
+      
+      // Enter to finish path
+      if (e.key === 'Enter' && activeTool === 'pen' && penPoints.length > 1) {
+          finishPenPath();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNodeIds, activeTool]);
+  }, [selectedNodeIds, activeTool, penPoints]);
 
   const screenToWorld = useCallback((screenX: number, screenY: number): Point => {
     return {
@@ -108,6 +116,52 @@ function App() {
     };
   }, [view]);
 
+  const finishPenPath = () => {
+        if (penPoints.length < 2) {
+            setPenPoints([]);
+            return;
+        }
+        
+        const xs = penPoints.map(p => p.x);
+        const ys = penPoints.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        // Ensure non-zero width/height
+        const width = Math.max(1, maxX - minX);
+        const height = Math.max(1, maxY - minY);
+
+        const id = generateId();
+        const newNode: CanvasNode = {
+            id,
+            type: 'path',
+            x: minX,
+            y: minY,
+            width,
+            height,
+            content: '',
+            color: '#ffffff',
+            fillColor: '#dbeafe',
+            strokeColor: '#3b82f6',
+            strokeWidth: 2,
+            // Normalize points AND their handles to 0-1 range relative to bounding box
+            points: penPoints.map(p => ({
+                x: (p.x - minX) / width,
+                y: (p.y - minY) / height,
+                lcx: p.lcx ? p.lcx / width : undefined,
+                lcy: p.lcy ? p.lcy / height : undefined,
+                rcx: p.rcx ? p.rcx / width : undefined,
+                rcy: p.rcy ? p.rcy / height : undefined,
+            }))
+        };
+        
+        setNodes(prev => [...prev, newNode]);
+        setSelectedNodeIds([id]);
+        setPenPoints([]);
+        setActivePenPointIndex(null);
+  };
+
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.target === canvasRef.current && isLayersOpen) {
         setIsLayersOpen(false);
@@ -122,56 +176,27 @@ function App() {
       return;
     }
 
-    // 2. Pen Tool (Custom Path)
+    // 2. Pen Tool (Advanced)
     if (activeTool === 'pen') {
         e.stopPropagation();
         
-        // Check if we are closing the path (click near start)
+        // A. Check if clicking start point to close
         if (penPoints.length > 2) {
             const start = penPoints[0];
             const dist = Math.sqrt(Math.pow(worldPos.x - start.x, 2) + Math.pow(worldPos.y - start.y, 2));
-            const threshold = 10 / view.scale; // 10px screen threshold
+            const threshold = 10 / view.scale;
 
             if (dist < threshold) {
-                // Close Path & Create Node
-                const xs = penPoints.map(p => p.x);
-                const ys = penPoints.map(p => p.y);
-                const minX = Math.min(...xs);
-                const maxX = Math.max(...xs);
-                const minY = Math.min(...ys);
-                const maxY = Math.max(...ys);
-                const width = maxX - minX;
-                const height = maxY - minY;
-
-                const id = generateId();
-                const newNode: CanvasNode = {
-                    id,
-                    type: 'path',
-                    x: minX,
-                    y: minY,
-                    width,
-                    height,
-                    content: '',
-                    color: '#ffffff',
-                    fillColor: '#dbeafe',
-                    strokeColor: '#3b82f6',
-                    strokeWidth: 2,
-                    // Normalize points to 0-1 range
-                    points: penPoints.map(p => ({
-                        x: (p.x - minX) / width,
-                        y: (p.y - minY) / height
-                    }))
-                };
-                
-                setNodes(prev => [...prev, newNode]);
-                setSelectedNodeIds([id]);
-                setPenPoints([]);
-                // Do not switch tool, let user draw another shape if they want
+                finishPenPath();
                 return;
             }
         }
         
-        setPenPoints(prev => [...prev, worldPos]);
+        // B. Add new point
+        const newPoint = { x: worldPos.x, y: worldPos.y };
+        setPenPoints(prev => [...prev, newPoint]);
+        setActivePenPointIndex(penPoints.length); // Index of the point we just added
+        setIsPenDragging(true); // Start drag mode immediately to allow handle creation
         return;
     }
 
@@ -265,9 +290,30 @@ function App() {
   const handlePointerMove = (e: React.PointerEvent) => {
     const worldPos = screenToWorld(e.clientX, e.clientY);
     
-    // Update cursor position for Pen tool rubber banding
+    // Pen Tool Logic: Dragging creates handles
     if (activeTool === 'pen') {
         setCurrentPointerPos(worldPos);
+        
+        if (isPenDragging && activePenPointIndex !== null && penPoints[activePenPointIndex]) {
+            // Dragging to create bezier handles
+            // Current mouse pos is the Out handle (rc)
+            const anchor = penPoints[activePenPointIndex];
+            const dx = worldPos.x - anchor.x;
+            const dy = worldPos.y - anchor.y;
+
+            setPenPoints(prev => {
+                const copy = [...prev];
+                copy[activePenPointIndex] = {
+                    ...anchor,
+                    rcx: dx,
+                    rcy: dy,
+                    lcx: -dx, // Mirror for smooth join
+                    lcy: -dy
+                };
+                return copy;
+            });
+            return;
+        }
     }
 
     // 1. Resizing
@@ -379,6 +425,11 @@ function App() {
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    if (activeTool === 'pen') {
+        setIsPenDragging(false);
+        // Do not reset activePenPointIndex here, user might just click again to continue path
+    }
+
     if (isBoxSelecting && selectionBox) {
         // Find intersecting nodes
         const selected = nodes.filter(node => 
@@ -440,6 +491,10 @@ function App() {
           setNodes(prev => prev.map(n => selectedNodeIds.includes(n.id) ? { ...n, ...updates } : n));
       }
   };
+  
+  const updateNodePoints = (id: string, updates: Partial<CanvasNode>) => {
+      setNodes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
+  };
 
   const handleResizeNode = (id: string, width: number, height: number) => {
     if (!resizeState) { 
@@ -469,6 +524,26 @@ function App() {
 
   // Calculate Pen Snap State
   const isSnapToStart = activeTool === 'pen' && penPoints.length > 2 && currentPointerPos && Math.sqrt(Math.pow(currentPointerPos.x - penPoints[0].x, 2) + Math.pow(currentPointerPos.y - penPoints[0].y, 2)) < (10 / view.scale);
+
+  // Generate SVG Path String for Preview
+  const getPenPreviewPath = () => {
+      if (penPoints.length === 0) return '';
+      let d = `M ${penPoints[0].x} ${penPoints[0].y} `;
+      for (let i = 1; i < penPoints.length; i++) {
+          const prev = penPoints[i-1];
+          const curr = penPoints[i];
+          if (prev.rcx !== undefined && curr.lcx !== undefined) {
+             d += `C ${prev.x + prev.rcx} ${prev.y + prev.rcy}, ${curr.x + curr.lcx} ${curr.y + curr.lcy}, ${curr.x} ${curr.y} `;
+          } else {
+             d += `L ${curr.x} ${curr.y} `;
+          }
+      }
+      // Rubber band line to mouse
+      if (currentPointerPos && !isPenDragging) {
+         d += `L ${currentPointerPos.x} ${currentPointerPos.y}`;
+      }
+      return d;
+  };
 
   return (
     <div 
@@ -522,6 +597,7 @@ function App() {
               onChange={updateNodeContent}
               onResize={handleResizeNode}
               onResizeStart={(e, handle) => handleResizeStart(e, handle, node.id)}
+              onUpdateNode={updateNodePoints}
             />
           ))}
 
@@ -529,14 +605,29 @@ function App() {
           {activeTool === 'pen' && penPoints.length > 0 && (
               <svg className="absolute top-0 left-0 overflow-visible pointer-events-none" style={{ zIndex: 100 }}>
                 <path 
-                    d={`M ${penPoints.map(p => `${p.x} ${p.y}`).join(' L ')} ${currentPointerPos ? `L ${currentPointerPos.x} ${currentPointerPos.y}` : ''}`}
+                    d={getPenPreviewPath()}
                     fill="none"
                     stroke="#3b82f6"
                     strokeWidth="2"
-                    strokeDasharray="4 2"
                 />
                 {penPoints.map((p, i) => (
-                    <circle key={i} cx={p.x} cy={p.y} r={3/view.scale} fill="#3b82f6" />
+                    <g key={i}>
+                        {/* Anchor */}
+                        <circle cx={p.x} cy={p.y} r={3/view.scale} fill="#fff" stroke="#3b82f6" strokeWidth={1/view.scale} />
+                        {/* Handles (Visual feedback while drawing) */}
+                        {p.rcx && (
+                            <>
+                                <line x1={p.x} y1={p.y} x2={p.x+p.rcx} y2={p.y+p.rcy} stroke="#3b82f6" strokeWidth={1/view.scale} opacity="0.5" />
+                                <circle cx={p.x+p.rcx} cy={p.y+p.rcy} r={2/view.scale} fill="#3b82f6" />
+                            </>
+                        )}
+                        {p.lcx && (
+                            <>
+                                <line x1={p.x} y1={p.y} x2={p.x+p.lcx} y2={p.y+p.lcy} stroke="#3b82f6" strokeWidth={1/view.scale} opacity="0.5" />
+                                <circle cx={p.x+p.lcx} cy={p.y+p.lcy} r={2/view.scale} fill="#3b82f6" />
+                            </>
+                        )}
+                    </g>
                 ))}
                 {isSnapToStart && (
                     <circle cx={penPoints[0].x} cy={penPoints[0].y} r={8/view.scale} fill="rgba(59, 130, 246, 0.5)" />

@@ -1,6 +1,6 @@
 
-import React, { useRef, useEffect, useState } from 'react';
-import { CanvasNode } from '../types';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import { CanvasNode, Point } from '../types';
 
 interface NodeProps {
   node: CanvasNode;
@@ -10,11 +10,13 @@ interface NodeProps {
   onChange: (id: string, newContent: string) => void;
   onResize: (id: string, width: number, height: number) => void;
   onResizeStart?: (e: React.PointerEvent, handle: string) => void;
+  onUpdateNode?: (id: string, updates: Partial<CanvasNode>) => void;
 }
 
-const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, onResize, onResizeStart }) => {
+const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onChange, onResize, onResizeStart, onUpdateNode }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [activeControl, setActiveControl] = useState<{ index: number, type: 'anchor' | 'left' | 'right' } | null>(null);
 
   // Sync editing state: Exit edit mode when deselected
   useEffect(() => {
@@ -80,9 +82,114 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
     />
   );
 
+  // --- Path Editing Logic ---
+
+  const handleControlPointDown = (e: React.PointerEvent, index: number, type: 'anchor' | 'left' | 'right') => {
+      e.stopPropagation();
+      e.preventDefault();
+      setActiveControl({ index, type });
+      // Capture pointer to track movement outside the handle
+      (e.target as Element).setPointerCapture(e.pointerId);
+  };
+
+  const handleControlPointMove = (e: React.PointerEvent) => {
+      if (!activeControl || !node.points || !onUpdateNode) return;
+      e.stopPropagation();
+
+      const dx = e.movementX / node.width;
+      const dy = e.movementY / node.height;
+      const { index, type } = activeControl;
+      
+      const newPoints = [...node.points];
+      const point = { ...newPoints[index] };
+
+      if (type === 'anchor') {
+          // Move anchor and handles together
+          point.x += dx;
+          point.y += dy;
+      } else if (type === 'left') {
+          point.lcx = (point.lcx || 0) + dx;
+          point.lcy = (point.lcy || 0) + dy;
+          // Mirror right handle if holding Shift or simple mode (optional, omitting for now to allow free editing)
+      } else if (type === 'right') {
+          point.rcx = (point.rcx || 0) + dx;
+          point.rcy = (point.rcy || 0) + dy;
+      }
+
+      newPoints[index] = point;
+      onUpdateNode(node.id, { points: newPoints });
+  };
+
+  const handleControlPointUp = (e: React.PointerEvent) => {
+      if (activeControl) {
+        e.stopPropagation();
+        (e.target as Element).releasePointerCapture(e.pointerId);
+        setActiveControl(null);
+      }
+  };
+
+  const handleAnchorDoubleClick = (e: React.MouseEvent, index: number) => {
+      e.stopPropagation();
+      if (!node.points || !onUpdateNode) return;
+
+      const newPoints = [...node.points];
+      const p = newPoints[index];
+      
+      // Toggle between Smooth (handles) and Sharp (no handles)
+      if (p.lcx !== undefined || p.rcx !== undefined) {
+          // Remove handles (Sharp)
+          delete p.lcx; delete p.lcy;
+          delete p.rcx; delete p.rcy;
+      } else {
+          // Add default handles (Smooth) - simple offset
+          p.lcx = -0.1; p.lcy = 0;
+          p.rcx = 0.1; p.rcy = 0;
+      }
+      newPoints[index] = p;
+      onUpdateNode(node.id, { points: newPoints });
+  };
+
+  const handlePathSegmentDoubleClick = (e: React.MouseEvent) => {
+      if (!isEditing || !onUpdateNode || !node.points) return;
+      e.stopPropagation();
+      
+      // Rough logic to add a point where clicked
+      // 1. Calculate relative click position (0-1)
+      const rect = (e.currentTarget as Element).getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) / rect.width;
+      const clickY = (e.clientY - rect.top) / rect.height;
+
+      // 2. Find closest segment (simplified: just find closest index to insert after)
+      // A proper implementation would project the point onto the bezier curve.
+      // For now, we'll find the closest two points and insert between them.
+      let closestIdx = 0;
+      let minDist = Infinity;
+      
+      for(let i=0; i<node.points.length; i++) {
+          const p = node.points[i];
+          const dist = Math.hypot(p.x - clickX, p.y - clickY);
+          if (dist < minDist) {
+              minDist = dist;
+              closestIdx = i;
+          }
+      }
+
+      // Check if we should insert before or after closestIdx
+      const nextIdx = (closestIdx + 1) % node.points.length;
+      const prevIdx = (closestIdx - 1 + node.points.length) % node.points.length;
+      
+      // Heuristic: Insert after closest if click is closer to next than prev
+      // This is a very rough "add point" approximation.
+      const newPoints = [...node.points];
+      newPoints.splice(closestIdx + 1, 0, { x: clickX, y: clickY }); // Insert simple sharp point
+      
+      onUpdateNode(node.id, { points: newPoints });
+  };
+
+
   // --- Render Different Node Types ---
 
-  // 1. Drawing
+  // 1. Drawing (Pencil)
   if (node.type === 'draw' && node.points) {
     const pathData = node.points.length > 1 
       ? `M ${node.points[0].x} ${node.points[0].y} ` + node.points.slice(1).map(p => `L ${p.x} ${p.y}`).join(' ')
@@ -310,11 +417,37 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       svgPath = `M${w*0.5},0 L${w},${h*0.25} L${w},${h*0.75} L${w*0.5},${h} L0,${h*0.75} L0,${h*0.25} z`;
   }
   else if (node.type === 'path' && node.points) {
-      // Custom Path - points are normalized (0-1)
+      // Custom Path Generation with Bezier support
       const w = node.width;
       const h = node.height;
-      svgPath = `M ${node.points[0].x * w} ${node.points[0].y * h} ` + 
-                node.points.slice(1).map(p => `L ${p.x * w} ${p.y * h}`).join(' ') + " z";
+      
+      const p0 = node.points[0];
+      let d = `M ${p0.x * w} ${p0.y * h} `;
+      
+      for (let i = 1; i < node.points.length; i++) {
+          const prev = node.points[i-1];
+          const curr = node.points[i];
+          
+          if (prev.rcx !== undefined && curr.lcx !== undefined) {
+              // Cubic Bezier
+              // Control points are stored relative to anchor, so add anchor pos
+              const cp1x = (prev.x + prev.rcx) * w;
+              const cp1y = (prev.y + prev.rcy) * h;
+              const cp2x = (curr.x + curr.lcx) * w;
+              const cp2y = (curr.y + curr.lcy) * h;
+              const x = curr.x * w;
+              const y = curr.y * h;
+              d += `C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x} ${y} `;
+          } else {
+              // Line
+              d += `L ${curr.x * w} ${curr.y * h} `;
+          }
+      }
+      // Close path if implicitly closed (though our logic usually keeps it open unless Z is manually handled, 
+      // but for filled shapes we usually want z. For open paths, the user stops drawing.)
+      // Current Pen implementation closes if clicked on start, but we can also just append Z if it's a closed shape style.
+      d += "Z";
+      svgPath = d;
   }
 
   // Calculate clip path based on shape type
@@ -324,11 +457,19 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
   else if (node.type === 'diamond') clipPathValue = 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
   else if (['star', 'pentagon', 'hexagon', 'path'].includes(node.type)) clipPathValue = `path('${svgPath}')`;
 
+  const scaleCorrection = 1/scale; // Make handles constant size regardless of zoom
+
   return (
     <div
-      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-1 ring-blue-500 z-10' : ''} ${isSticky ? 'shadow-md' : ''}`}
+      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected && !isEditing ? 'ring-1 ring-blue-500 z-10' : ''} ${isSticky ? 'shadow-md' : ''}`}
       style={{ ...baseStyle }}
       onPointerDown={onMouseDown}
+      onDoubleClick={(e) => {
+          if (node.type === 'path') {
+              e.stopPropagation();
+              setIsEditing(true);
+          }
+      }}
     >
       {/* 
         Layer 1: Stroke (Only if Outside)
@@ -392,7 +533,8 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
         />
       )}
       
-      {isSelected && (
+      {/* Standard Resize Handles (Not in Edit Mode) */}
+      {isSelected && !isEditing && (
         <>
             <ResizeHandle cursor="nwse-resize" position="-top-1.5 -left-1.5" handle="nw" />
             <ResizeHandle cursor="nesw-resize" position="-top-1.5 -right-1.5" handle="ne" />
@@ -405,6 +547,71 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
             <ResizeHandle cursor="ns-resize" position="top-0 left-1/2 -translate-x-1/2 -translate-y-1.5" handle="n" />
         </>
       )}
+
+      {/* Path Edit Mode Overlays */}
+      {isEditing && node.type === 'path' && node.points && (
+          <svg 
+            width="100%" height="100%" 
+            style={{ position: 'absolute', overflow: 'visible', zIndex: 50 }}
+            onPointerUp={handleControlPointUp}
+            onPointerMove={handleControlPointMove}
+            onDoubleClick={handlePathSegmentDoubleClick}
+          >
+              {/* Draw Lines to Control Points */}
+              {node.points.map((p, i) => (
+                  <g key={`lines-${i}`}>
+                      {p.lcx !== undefined && (
+                          <line 
+                            x1={p.x * node.width} y1={p.y * node.height} 
+                            x2={(p.x + p.lcx) * node.width} y2={(p.y + p.lcy) * node.height}
+                            stroke="#3b82f6" strokeWidth="1" vectorEffect="non-scaling-stroke"
+                          />
+                      )}
+                      {p.rcx !== undefined && (
+                          <line 
+                            x1={p.x * node.width} y1={p.y * node.height} 
+                            x2={(p.x + p.rcx) * node.width} y2={(p.y + p.rcy) * node.height}
+                            stroke="#3b82f6" strokeWidth="1" vectorEffect="non-scaling-stroke"
+                          />
+                      )}
+                  </g>
+              ))}
+
+              {/* Draw Anchors & Handles */}
+              {node.points.map((p, i) => (
+                  <g key={`controls-${i}`}>
+                      {/* Left Control Handle */}
+                      {p.lcx !== undefined && (
+                          <circle 
+                            cx={(p.x + p.lcx) * node.width} cy={(p.y + p.lcy) * node.height} r={4 * scaleCorrection}
+                            fill="#fff" stroke="#3b82f6" strokeWidth="1"
+                            className="cursor-pointer hover:fill-blue-100"
+                            onPointerDown={(e) => handleControlPointDown(e, i, 'left')}
+                          />
+                      )}
+                       {/* Right Control Handle */}
+                       {p.rcx !== undefined && (
+                          <circle 
+                            cx={(p.x + p.rcx) * node.width} cy={(p.y + p.rcy) * node.height} r={4 * scaleCorrection}
+                            fill="#fff" stroke="#3b82f6" strokeWidth="1"
+                            className="cursor-pointer hover:fill-blue-100"
+                            onPointerDown={(e) => handleControlPointDown(e, i, 'right')}
+                          />
+                      )}
+                      {/* Anchor Point */}
+                      <rect 
+                        x={p.x * node.width - (4 * scaleCorrection)} y={p.y * node.height - (4 * scaleCorrection)} 
+                        width={8 * scaleCorrection} height={8 * scaleCorrection}
+                        fill="#fff" stroke="#3b82f6" strokeWidth="1"
+                        className="cursor-pointer hover:fill-blue-100"
+                        onPointerDown={(e) => handleControlPointDown(e, i, 'anchor')}
+                        onDoubleClick={(e) => handleAnchorDoubleClick(e, i)}
+                      />
+                  </g>
+              ))}
+          </svg>
+      )}
+
     </div>
   );
 };
