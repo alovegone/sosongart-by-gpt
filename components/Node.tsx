@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState } from 'react';
 import { CanvasNode } from '../types';
 
@@ -280,8 +279,8 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
   const fill = node.fillColor || node.color || '#ffffff';
   const stroke = node.strokeColor || 'transparent';
   const strokeW = node.strokeWidth || 0;
+  const align = node.strokeAlign || 'center';
   
-  // Shape container styles
   const commonShapeStyle: React.CSSProperties = {
       position: 'absolute',
       inset: 0,
@@ -289,54 +288,85 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
       height: '100%',
   };
 
+  // SVG Path Definitions
+  let svgPath = '';
+  if (node.type === 'rectangle' || node.type === 'sticky') svgPath = `M0,0 h${node.width} v${node.height} h-${node.width} z`;
+  if (node.type === 'circle') svgPath = `M${node.width/2},0 A${node.width/2},${node.height/2} 0 1,1 ${node.width/2},${node.height} A${node.width/2},${node.height/2} 0 1,1 ${node.width/2},0`;
+  if (node.type === 'triangle') svgPath = `M${node.width/2},0 L0,${node.height} L${node.width},${node.height} z`;
+
   return (
     <div
-      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-2 ring-blue-500 z-10' : ''}`}
+      className={`absolute top-0 left-0 flex items-center justify-center ${isSelected ? 'ring-1 ring-blue-500 z-10' : ''}`}
       style={{ ...baseStyle }}
       onPointerDown={onMouseDown}
     >
       {/* 
-         For Rectangle/Circle: standard div with border/background works for most cases.
-         However, to support 'gradient' fills properly along with strokes, standard CSS background + border is fine.
-         Images as fill is also supported via background-image.
+        Layer 1: Stroke (Only if Outside)
+        Rendered BEHIND fill.
       */}
-      {node.type !== 'triangle' ? (
-          <div 
-            className={`${shapeClass}`}
-            style={{ 
-                ...commonShapeStyle,
-                background: fill,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                border: `${strokeW}px solid ${stroke}`
-            }}
-          />
-      ) : (
-          /* 
-             For Triangle: CSS border/clip-path is tricky with stroke + gradient fill.
-             Layered approach:
-             1. Fill Layer: Div with clip-path (supports gradients/images)
-             2. Stroke Layer: SVG polygon (supports stroke)
-          */
-         <>
-            {/* Fill Layer */}
-            <div 
-                style={{
-                    ...commonShapeStyle,
-                    background: fill,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    clipPath: 'polygon(50% 0%, 0% 100%, 100% 100%)'
-                }}
-            />
-            {/* Stroke Layer (SVG Overlay) */}
-            <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-                <polygon points="50,0 0,100 100,100" fill="none" stroke={stroke} strokeWidth={strokeW} vectorEffect="non-scaling-stroke" />
-            </svg>
-         </>
+      {strokeW > 0 && align === 'outside' && (
+          <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 0 }}>
+              <path d={svgPath} fill="none" stroke={stroke} strokeWidth={strokeW * 2} vectorEffect="non-scaling-stroke" />
+          </svg>
       )}
 
-      {/* Resize Handles */}
+      {/* 
+        Layer 2: Fill 
+        Use Div with ClipPath for perfect gradient/image support.
+      */}
+      <div 
+        style={{
+            ...commonShapeStyle,
+            background: fill,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            zIndex: 1,
+            clipPath: node.type === 'circle' ? 'circle(50% at 50% 50%)' 
+                    : node.type === 'triangle' ? 'polygon(50% 0%, 0% 100%, 100% 100%)' 
+                    : undefined // Rectangle default
+        }}
+      />
+
+      {/* 
+        Layer 3: Stroke (Center or Inside)
+        Rendered ON TOP of fill.
+      */}
+      {strokeW > 0 && align !== 'outside' && (
+          <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 2, pointerEvents: 'none' }}>
+              {align === 'inside' ? (
+                  // Inside: Clip stroke to shape path
+                  <>
+                    <defs>
+                        <clipPath id={`clip-${node.id}`}>
+                            <path d={svgPath} />
+                        </clipPath>
+                    </defs>
+                    {/* Double width + clip = inside stroke */}
+                    <path d={svgPath} fill="none" stroke={stroke} strokeWidth={strokeW * 2} clipPath={`url(#clip-${node.id})`} vectorEffect="non-scaling-stroke" />
+                  </>
+              ) : (
+                  // Center: Standard SVG stroke
+                  <path d={svgPath} fill="none" stroke={stroke} strokeWidth={strokeW} vectorEffect="non-scaling-stroke" />
+              )}
+          </svg>
+      )}
+
+      {/* Text Content */}
+      {(node.type === 'sticky' || node.type === 'rectangle' || node.type === 'circle' || node.type === 'triangle') && (
+        <textarea
+            value={node.content}
+            onChange={handleInput}
+            className={`relative z-10 w-full h-full bg-transparent resize-none border-none outline-none p-4 text-center flex items-center justify-center ${node.type === 'triangle' ? 'pt-12' : ''}`}
+            style={{ 
+                fontFamily: node.fontFamily || 'Inter, sans-serif',
+                fontSize: `${node.fontSize || 16}px`,
+                color: (node.strokeColor || '#000'), // Fallback text color
+                textAlign: node.textAlign || 'center'
+            }}
+            placeholder=""
+        />
+      )}
+      
       {isSelected && (
         <>
             <ResizeHandle cursor="nwse-resize" position="-top-1.5 -left-1.5" handle="nw" />

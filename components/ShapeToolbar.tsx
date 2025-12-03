@@ -78,8 +78,8 @@ const TabButton = ({ active, onClick, children }: { active: boolean, onClick: ()
 
 const PRESET_COLORS = [
   '#000000', '#FFFFFF', '#EF4444', '#F97316', '#F59E0B', '#22C55E', '#3B82F6', '#A855F7',
-  '#F8F9FA', '#E9ECEF', '#DEE2E6', '#CED4DA', '#ADB5BD', '#6C757D', '#495057', '#343A40', '#212529',
-  '#FFF5F5', '#FFE3E3', '#FFC9C9', '#FFA8A8', '#FF8787', '#FF6B6B', '#FA5252', '#F03E3E', '#E03131', '#C92A2A',
+  '#F8F9FA', '#E9ECEF', '#CED4DA', '#6C757D', '#343A40', '#212529',
+  '#FF6B6B', '#FA5252', '#F03E3E', '#E03131', '#C92A2A',
   '#FFF9DB', '#FFF3BF', '#FFEC99', '#FFD43B', '#FCC419', '#FAB005', '#F59F00', '#F08C00', '#E67700', '#D9480F',
   '#EBFBEE', '#D3F9D8', '#B2F2BB', '#8CE99A', '#69DB7C', '#51CF66', '#40C057', '#37B24D', '#2F9E44', '#2B8A3E',
   '#E3FAFC', '#C5F6FA', '#99E9F2', '#66D9E8', '#3BC9DB', '#22B8CF', '#15AABF', '#1098AD', '#0C8599', '#0B7285',
@@ -180,7 +180,8 @@ const ShapeToolbar: React.FC<ShapeToolbarProps> = ({ selectedNode, onUpdateNode,
   // --- Handlers ---
 
   const updateFill = (color: string) => onUpdateNode({ fillColor: color });
-  
+  const updateStroke = (color: string) => onUpdateNode({ strokeColor: color });
+
   const buildGradientString = useCallback(() => {
       const stopsStr = [...gradStops]
         .sort((a, b) => a.offset - b.offset)
@@ -206,7 +207,7 @@ const ShapeToolbar: React.FC<ShapeToolbarProps> = ({ selectedNode, onUpdateNode,
       const hex = hsvaToHex(newHsva.h, newHsva.s, newHsva.v, newHsva.a);
       
       if (activePopup === 'stroke') {
-          onUpdateNode({ strokeColor: hex });
+          updateStroke(hex);
           if (!selectedNode.strokeWidth) onUpdateNode({ strokeWidth: 1 });
       } else {
           if (activeFillTab === 'solid') updateFill(hex);
@@ -395,28 +396,51 @@ const ShapeToolbar: React.FC<ShapeToolbarProps> = ({ selectedNode, onUpdateNode,
                     <button onClick={() => setActivePopup(null)} className="text-slate-400 hover:text-slate-600"><IconX className="w-4 h-4"/></button>
                 </div>
 
-                {/* Stroke Width Control */}
+                {/* Stroke Alignment & Width Control */}
                 {activePopup === 'stroke' && (
-                    <div className="mb-4 flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-gray-100">
-                        <span className="text-xs text-slate-500 whitespace-nowrap w-16">粗细 (Width)</span>
-                        <input 
-                            type="range" min="0" max="20" step="0.5" 
-                            value={selectedNode.strokeWidth || 0}
-                            onChange={(e) => onUpdateNode({ strokeWidth: parseFloat(e.target.value) })}
-                            className="flex-1 h-1.5 bg-gray-300 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <div className="w-14 flex items-center bg-white border border-gray-200 rounded px-1 focus-within:ring-1 focus-within:ring-indigo-500">
+                    <>
+                        <div className="mb-4 flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-gray-100">
+                            <span className="text-xs text-slate-500 whitespace-nowrap w-16">粗细 (Width)</span>
                             <input 
-                                type="number" 
-                                min="0" max="20" step="0.5"
+                                type="range" min="0" max="20" step="0.5" 
                                 value={selectedNode.strokeWidth || 0}
-                                onChange={(e) => onUpdateNode({ strokeWidth: parseFloat(e.target.value) || 0 })}
-                                onPointerDown={(e) => e.stopPropagation()} 
-                                className="w-full bg-transparent text-xs outline-none text-center py-1 text-slate-700 font-medium"
+                                onChange={(e) => onUpdateNode({ strokeWidth: parseFloat(e.target.value) })}
+                                className="flex-1 h-1.5 bg-gray-300 rounded-lg appearance-none cursor-pointer"
                             />
-                            <span className="text-[10px] text-slate-400 mr-1">px</span>
+                            <div className="w-14 flex items-center bg-white border border-gray-200 rounded px-1 focus-within:ring-1 focus-within:ring-indigo-500">
+                                <input 
+                                    type="number" 
+                                    min="0" max="20" step="0.5"
+                                    value={selectedNode.strokeWidth || 0}
+                                    onChange={(e) => onUpdateNode({ strokeWidth: parseFloat(e.target.value) || 0 })}
+                                    onPointerDown={(e) => e.stopPropagation()} 
+                                    className="w-full bg-transparent text-xs outline-none text-center py-1 text-slate-700 font-medium"
+                                />
+                                <span className="text-[10px] text-slate-400 mr-1">px</span>
+                            </div>
                         </div>
-                    </div>
+                        {/* Stroke Align Controls */}
+                        <div className="flex bg-slate-100 p-1 rounded-lg mb-4">
+                            <button 
+                                onClick={() => onUpdateNode({ strokeAlign: 'inside' })}
+                                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedNode.strokeAlign === 'inside' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                Inside
+                            </button>
+                            <button 
+                                onClick={() => onUpdateNode({ strokeAlign: 'center' })}
+                                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${!selectedNode.strokeAlign || selectedNode.strokeAlign === 'center' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                Center
+                            </button>
+                            <button 
+                                onClick={() => onUpdateNode({ strokeAlign: 'outside' })}
+                                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${selectedNode.strokeAlign === 'outside' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:bg-slate-50'}`}
+                            >
+                                Outside
+                            </button>
+                        </div>
+                    </>
                 )}
 
                 {/* Tab Switcher (Fill Mode) */}
