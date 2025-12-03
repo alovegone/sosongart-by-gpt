@@ -1,10 +1,10 @@
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { CanvasNode } from '../types';
 import { 
   IconChevronDown, IconDotsHorizontal, IconX, 
   IconAlignLeft, IconAlignCenter, IconAlignRight, IconAlignJustify,
-  IconUnderline, IconStrikethrough, IconImage, IconPlus, IconMinus, IconPipette
+  IconUnderline, IconStrikethrough, IconImage, IconPlus, IconMinus, IconPipette,
+  IconStroke
 } from './Icons';
 import { FONTS, FONT_WEIGHTS, FONT_SIZES } from '../constants';
 
@@ -129,7 +129,7 @@ const RADIAL_POSITIONS = [
 ];
 
 const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, position }) => {
-  const [activePopup, setActivePopup] = useState<'font' | 'weight' | 'size' | 'color' | 'advanced' | null>(null);
+  const [activePopup, setActivePopup] = useState<'font' | 'weight' | 'size' | 'color' | 'stroke' | 'advanced' | null>(null);
   const [activeFillTab, setActiveFillTab] = useState<'solid' | 'gradient' | 'image'>('solid');
   
   // Custom Color Picker State (HSVA)
@@ -152,39 +152,44 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
   const fileInputRef = useRef<HTMLInputElement>(null);
   const draggingStopRef = useRef<number | null>(null);
 
-  // Initialize from Node
+  // Initialize state based on active popup/node property
   useEffect(() => {
+    // If Stroke Popup is active, initialize with stroke color
+    if (activePopup === 'stroke') {
+        const strokeHex = selectedNode.strokeColor || '#000000';
+        setHsva(hexToHsva(strokeHex));
+        setActiveFillTab('solid'); // Strokes are solid by default/convention here
+        return;
+    }
+
+    // Default: Initialize from Fill Color
     if (!selectedNode.fillColor) return;
     
-    // Simple detection of mode
     if (selectedNode.fillColor.includes('gradient')) {
         setActiveFillTab('gradient');
-        // Simple Parser would go here in full app, for now we keep UI state separate from Node string
-        // unless we built a full CSS parser.
     } else if (selectedNode.fillColor.includes('url')) {
         setActiveFillTab('image');
     } else {
         const parsedHsva = hexToHsva(selectedNode.fillColor.startsWith('#') ? selectedNode.fillColor : '#000000');
         // FIX: Preserve existing Hue if the new color is grayscale (S=0).
-        // This prevents the Hue slider from resetting to 0 when selecting white/black/gray.
         setHsva(prev => ({
             ...parsedHsva,
             h: parsedHsva.s === 0 ? prev.h : parsedHsva.h
         }));
         setActiveFillTab('solid');
     }
-  }, [selectedNode.fillColor, selectedNode.id]);
+  }, [selectedNode.fillColor, selectedNode.strokeColor, selectedNode.id, activePopup]);
 
   // Sync Color Picker to Active Gradient Stop
   useEffect(() => {
-      if (activeFillTab === 'gradient' && gradStops[activeStopIndex]) {
+      if (activeFillTab === 'gradient' && gradStops[activeStopIndex] && activePopup === 'color') {
           const parsedHsva = hexToHsva(gradStops[activeStopIndex].color);
           setHsva(prev => ({
               ...parsedHsva,
               h: parsedHsva.s === 0 ? prev.h : parsedHsva.h
           }));
       }
-  }, [activeStopIndex, activeFillTab]); 
+  }, [activeStopIndex, activeFillTab, activePopup]); 
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
@@ -252,23 +257,36 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
       setHsva(newHsva);
       const hex = hsvaToHex(newHsva.h, newHsva.s, newHsva.v, newHsva.a);
       
-      if (activeFillTab === 'solid') {
-          updateNodeColor(hex);
-      } else if (activeFillTab === 'gradient') {
-          const newStops = [...gradStops];
-          if (newStops[activeStopIndex]) {
-              newStops[activeStopIndex] = { ...newStops[activeStopIndex], color: hex };
-              setGradStops(newStops);
+      if (activePopup === 'stroke') {
+          onUpdateNode({ strokeColor: hex });
+          if (!selectedNode.strokeWidth) onUpdateNode({ strokeWidth: 1 }); // Ensure stroke is visible
+      } else {
+          // Fill Mode
+          if (activeFillTab === 'solid') {
+              updateNodeColor(hex);
+          } else if (activeFillTab === 'gradient') {
+              const newStops = [...gradStops];
+              if (newStops[activeStopIndex]) {
+                  newStops[activeStopIndex] = { ...newStops[activeStopIndex], color: hex };
+                  setGradStops(newStops);
+              }
           }
       }
   };
 
   const handlePresetClick = (hexOrGradient: string) => {
+      // Stroke Mode: Simple solid color only
+      if (activePopup === 'stroke') {
+          if (hexOrGradient.includes('gradient')) return; // Ignore gradients for stroke
+          const newHsva = hexToHsva(hexOrGradient);
+          handleColorChange(newHsva);
+          return;
+      }
+
+      // Fill Mode
       if (hexOrGradient.includes('gradient')) {
           setActiveFillTab('gradient');
           updateNodeColor(hexOrGradient);
-          // Note: Parsing gradient string back to stops is complex, 
-          // keeping UI simple for now by just applying it.
           return;
       }
 
@@ -359,6 +377,7 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
             <button 
             onClick={() => setActivePopup(activePopup === 'color' ? null : 'color')}
             className="w-8 h-8 rounded hover:bg-slate-100 flex items-center justify-center"
+            title="Fill Color"
             >
                 <div 
                     className="w-5 h-5 rounded-full border border-gray-200 shadow-sm" 
@@ -369,23 +388,64 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                     }} 
                 />
             </button>
+        </div>
 
-             {/* COLOR POPUP */}
-            {activePopup === 'color' && (
+        {/* Stroke */}
+        <div className="relative">
+            <button 
+                onClick={() => setActivePopup(activePopup === 'stroke' ? null : 'stroke')}
+                className={`w-8 h-8 rounded hover:bg-slate-100 flex items-center justify-center ${activePopup === 'stroke' ? 'bg-slate-100' : ''}`}
+                title="Stroke Color & Width"
+            >
+                <div 
+                    className="w-5 h-5 rounded-full border-2 bg-transparent" 
+                    style={{ borderColor: selectedNode.strokeColor || '#ccc' }} 
+                />
+            </button>
+
+             {/* POPUP FOR COLOR & STROKE */}
+            {(activePopup === 'color' || activePopup === 'stroke') && (
                 <div className="absolute bottom-full left-0 mb-2 bg-white rounded-xl shadow-xl border border-gray-100 p-4 w-[320px] z-50">
                 <div className="flex justify-between items-center mb-3">
-                    <span className="font-semibold text-slate-800">填充 (Fill)</span>
+                    <span className="font-semibold text-slate-800">
+                        {activePopup === 'color' ? '填充 (Fill)' : '描边 (Stroke)'}
+                    </span>
                     <button onClick={() => setActivePopup(null)} className="text-slate-400 hover:text-slate-600"><IconX className="w-4 h-4"/></button>
                 </div>
                 
-                <div className="bg-slate-100 p-1 rounded-lg flex mb-4">
-                    <TabButton active={activeFillTab === 'solid'} onClick={() => setActiveFillTab('solid')}>纯色</TabButton>
-                    <TabButton active={activeFillTab === 'gradient'} onClick={() => setActiveFillTab('gradient')}>渐变</TabButton>
-                    <TabButton active={activeFillTab === 'image'} onClick={() => setActiveFillTab('image')}>图片</TabButton>
-                </div>
+                {/* Stroke Width Control (Only visible in Stroke Mode) */}
+                {activePopup === 'stroke' && (
+                    <div className="mb-4 flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-gray-100">
+                        <span className="text-xs text-slate-500 whitespace-nowrap">粗细 (Width)</span>
+                        <input 
+                            type="range" min="0" max="10" step="0.5" 
+                            value={selectedNode.strokeWidth || 0}
+                            onChange={(e) => onUpdateNode({ strokeWidth: parseFloat(e.target.value) })}
+                            className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                        />
+                        <div className="w-12 flex items-center bg-white border border-gray-200 rounded px-1">
+                            <input 
+                                type="number" 
+                                value={selectedNode.strokeWidth || 0}
+                                onChange={(e) => onUpdateNode({ strokeWidth: parseFloat(e.target.value) })}
+                                className="w-full bg-transparent text-xs outline-none text-right py-1"
+                            />
+                            <span className="text-[10px] text-slate-400 ml-0.5">px</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tab Switcher (Only visible in Fill Mode, Strokes are solid only for now) */}
+                {activePopup === 'color' && (
+                    <div className="bg-slate-100 p-1 rounded-lg flex mb-4">
+                        <TabButton active={activeFillTab === 'solid'} onClick={() => setActiveFillTab('solid')}>纯色</TabButton>
+                        <TabButton active={activeFillTab === 'gradient'} onClick={() => setActiveFillTab('gradient')}>渐变</TabButton>
+                        <TabButton active={activeFillTab === 'image'} onClick={() => setActiveFillTab('image')}>图片</TabButton>
+                    </div>
+                )}
 
                 {/* GRADIENT EDITOR UI */}
-                {activeFillTab === 'gradient' && (
+                {activePopup === 'color' && activeFillTab === 'gradient' && (
                     <div className="flex flex-col gap-3 mb-4">
                         {/* Type Toggle */}
                         <div className="flex gap-2">
@@ -430,16 +490,9 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                                 <input 
                                     type="range" min="0" max="360" value={gradAngle} 
                                     onChange={(e) => setGradAngle(parseInt(e.target.value))}
-                                    className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                    className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
                                 />
-                                <div className="flex items-center bg-slate-50 border border-gray-200 rounded px-1 w-12">
-                                    <input 
-                                        type="number" value={gradAngle}
-                                        onChange={(e) => setGradAngle(parseInt(e.target.value))}
-                                        className="w-full bg-transparent text-xs outline-none text-right"
-                                    />
-                                    <span className="text-[10px] text-slate-400 ml-0.5">°</span>
-                                </div>
+                                <span className="text-xs text-slate-500 w-8 text-right font-medium">{gradAngle}°</span>
                             </div>
                         )}
 
@@ -463,12 +516,12 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                     </div>
                 )}
 
-                {/* COLOR PICKER (SHARED for Solid & Gradient) */}
+                {/* COLOR PICKER (SHARED for Solid, Gradient & Stroke) */}
                 {activeFillTab !== 'image' && (
                     <div className="flex flex-col gap-3">
                         <div className="flex justify-between items-center">
                             <span className="text-xs font-semibold text-slate-500">
-                                {activeFillTab === 'gradient' ? `Color Stop ${activeStopIndex + 1}` : '颜色 (Color)'}
+                                {activeFillTab === 'gradient' && activePopup === 'color' ? `Color Stop ${activeStopIndex + 1}` : '颜色 (Color)'}
                             </span>
                         </div>
 
@@ -559,7 +612,7 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                         <div>
                              <div className="flex justify-between mb-2 items-center">
                                 <span className="text-xs text-slate-400">预设 (Presets)</span>
-                                {activeFillTab === 'solid' && (
+                                {activeFillTab === 'solid' && activePopup !== 'stroke' && (
                                     <button 
                                         onClick={() => setShowAllPresets(!showAllPresets)}
                                         className="text-xs text-slate-400 hover:text-indigo-600 transition-colors"
@@ -570,7 +623,7 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                              </div>
                              
                              {/* Gradient Presets Section */}
-                             {activeFillTab === 'gradient' && (
+                             {activeFillTab === 'gradient' && activePopup === 'color' && (
                                 <div className="grid grid-cols-6 gap-1.5 mb-3">
                                     {PRESET_GRADIENTS.map((g, i) => (
                                         <button 
@@ -585,9 +638,9 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                              )}
 
                              {/* Solid Colors */}
-                             {activeFillTab === 'solid' && (
-                                <div className={`grid grid-cols-10 gap-1.5 p-1 transition-all ${showAllPresets ? 'max-h-[160px] overflow-y-auto custom-scrollbar' : ''}`}>
-                                    {(showAllPresets ? PRESET_COLORS : PRESET_COLORS.slice(0, 8)).map((c, i) => (
+                             {(activeFillTab === 'solid' || activePopup === 'stroke') && (
+                                <div className={`grid grid-cols-10 gap-1.5 p-1 transition-all ${showAllPresets && activePopup !== 'stroke' ? 'max-h-[160px] overflow-y-auto custom-scrollbar' : ''}`}>
+                                    {(showAllPresets && activePopup !== 'stroke' ? PRESET_COLORS : PRESET_COLORS.slice(0, 8)).map((c, i) => (
                                         <button 
                                             key={i}
                                             onClick={() => handlePresetClick(c)}
@@ -602,7 +655,7 @@ const TextToolbar: React.FC<TextToolbarProps> = ({ selectedNode, onUpdateNode, p
                     </div>
                 )}
 
-                {activeFillTab === 'image' && (
+                {activeFillTab === 'image' && activePopup === 'color' && (
                     <div className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-200 rounded-lg bg-slate-50 gap-3">
                         <IconImage className="w-8 h-8 text-slate-300" />
                         <button 
