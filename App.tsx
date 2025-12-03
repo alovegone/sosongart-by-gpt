@@ -5,7 +5,7 @@ import Toolbar from './components/Toolbar';
 import TextToolbar from './components/TextToolbar';
 import AIControls from './components/AIControls';
 import LayersPanel from './components/LayersPanel';
-import { IconMinus, IconPlus, IconGrid, IconLayers, IconRotateCcw } from './components/Icons';
+import { IconMinus, IconPlus, IconGrid, IconLayers } from './components/Icons';
 import { CanvasNode, NodeType, Point, Tool, ViewState } from './types';
 import { INITIAL_NODES, COLORS, INITIAL_SCALE, MIN_SCALE, MAX_SCALE } from './constants';
 import { generateBrainstormIdeas } from './services/geminiService';
@@ -79,7 +79,6 @@ function App() {
         const id = generateId();
         
         let newNode: CanvasNode;
-        // ... (Node creation logic remains same as before) ...
         if (activeTool === 'text') {
              newNode = {
                 id,
@@ -264,8 +263,7 @@ function App() {
   };
 
   const handleResizeNode = (id: string, width: number, height: number) => {
-    // Called by Auto-height logic in Node
-    if (!resizeState) { // Only allow auto-resize if user isn't actively resizing
+    if (!resizeState) { 
         setNodes(prev => prev.map(n => n.id === id ? { ...n, width, height } : n));
     }
   };
@@ -278,7 +276,44 @@ function App() {
     }
   };
 
-  const handleAIGenerate = async () => { /* ... existing logic ... */ };
+  const handleAIGenerate = async () => {
+      if (!selectedNodeId) return;
+      const node = nodes.find(n => n.id === selectedNodeId);
+      if (!node) return;
+      
+      setIsGenerating(true);
+      try {
+        const ideas = await generateBrainstormIdeas(node);
+        // Distribute ideas in a semi-circle around the node
+        const radius = 250;
+        const angleStep = Math.PI / (ideas.length + 1);
+        
+        const newNodes = ideas.map((idea, index) => {
+            const angle = Math.PI + (index + 1) * angleStep; // Bottom half
+            const dx = Math.cos(angle) * radius;
+            const dy = Math.sin(angle) * radius * 0.8; // flatten slightly
+            
+            return {
+                id: generateId(),
+                type: idea.type,
+                x: node.x + dx + (node.width - 200)/2,
+                y: node.y + dy + node.height + 50,
+                width: 200,
+                height: 200,
+                content: idea.content,
+                color: COLORS[idea.colorKey as keyof typeof COLORS] || COLORS.yellow,
+                textAlign: 'left',
+                fontSize: 16
+            } as CanvasNode;
+        });
+        
+        setNodes(prev => [...prev, ...newNodes]);
+      } catch (err) {
+        console.error("AI Error", err);
+      } finally {
+        setIsGenerating(false);
+      }
+  };
 
   const selectedNode = nodes.find(n => n.id === selectedNodeId);
   const selectedNodeScreenPos = selectedNode ? worldToScreen(selectedNode.x, selectedNode.y) : null;
@@ -308,7 +343,6 @@ function App() {
         className={`w-full h-full absolute inset-0 ${isPanning ? 'cursor-grab active:cursor-grabbing' : ''}`}
         onPointerDown={handlePointerDown}
         onWheel={(e) => {
-            // ... existing wheel logic ...
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
               const zoomSensitivity = 0.001;
@@ -342,4 +376,20 @@ function App() {
       </div>
 
       {selectedNodeId && selectedNode && !isDragging && !resizeState && selectedNode.type === 'text' && selectedNodeScreenPos && (
-          <TextToolbar selectedNode={selectedNode
+          <TextToolbar selectedNode={selectedNode} onUpdateNode={updateNodeStyle} position={selectedNodeScreenPos} />
+      )}
+
+      <Toolbar activeTool={activeTool} onSelectTool={setActiveTool} onUploadImage={handleUploadImage} style={layoutShiftStyle} />
+
+      <div className="fixed bottom-4 z-50 flex items-center bg-white rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 p-1 transition-all duration-300" style={layoutShiftStyle}>
+        <button className={`p-2 rounded-full transition-colors ${isLayersOpen ? 'bg-indigo-50 text-indigo-600' : 'hover:bg-slate-50 text-slate-500'}`} onClick={() => setIsLayersOpen(!isLayersOpen)}><IconLayers className="w-4 h-4" /></button>
+        <div className="w-px h-4 bg-gray-200 mx-1"></div>
+        <button className="p-2 hover:bg-slate-50 rounded-full text-slate-600" onClick={() => setView(v => ({ ...v, scale: Math.max(v.scale * 0.8, MIN_SCALE) }))}><IconMinus className="w-3 h-3" /></button>
+        <span className="text-xs font-medium text-slate-600 w-10 text-center">{Math.round(view.scale * 100)}%</span>
+        <button className="p-2 hover:bg-slate-50 rounded-full text-slate-600" onClick={() => setView(v => ({ ...v, scale: Math.min(v.scale * 1.2, MAX_SCALE) }))}><IconPlus className="w-3 h-3" /></button>
+      </div>
+    </div>
+  );
+}
+
+export default App;

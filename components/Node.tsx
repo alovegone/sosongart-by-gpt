@@ -149,10 +149,11 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, onMouseDown, onChange, on
             backgroundImage: node.fillColor,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
-            color: 'transparent'
+            color: 'transparent' // Fallback
          });
       } else {
          textStyle.color = node.fillColor || '#000000';
