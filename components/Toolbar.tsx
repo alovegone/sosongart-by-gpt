@@ -4,18 +4,20 @@ import { Tool } from '../types';
 import { 
   IconHand, IconMousePointer, IconSquare, IconType, IconPencil, 
   IconArrowUpRight, IconPlus, IconCircle, IconTriangle, IconLine,
-  IconImage, IconVideo, IconSparkles, IconStar, IconDiamond, IconHexagon, IconPentagon, IconPenTool
+  IconImage, IconVideo, IconSparkles, IconStar, IconDiamond, IconHexagon, IconPentagon, IconPenTool, IconMagnet
 } from './Icons';
 
 interface ToolbarProps {
   activeTool: Tool;
   onSelectTool: (tool: Tool) => void;
   onUploadImage: () => void;
+  snapEnabled: boolean;
+  onToggleSnap: () => void;
   style?: React.CSSProperties;
   className?: string;
 }
 
-const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadImage, style, className }) => {
+const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadImage, snapEnabled, onToggleSnap, style, className }) => {
   const [activePopup, setActivePopup] = useState<string | null>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
@@ -36,6 +38,8 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
     } else {
       if (toolId === 'image-upload') {
         onUploadImage();
+      } else if (toolId === 'snap-toggle') {
+        onToggleSnap();
       } else {
         onSelectTool(toolId as Tool);
       }
@@ -113,6 +117,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
         { id: 'video-dummy', label: 'Upload Video (Dev)', icon: IconVideo, disabled: true },
       ]
     },
+    { id: 'snap-toggle', icon: IconMagnet, label: 'Snap Align' },
   ];
 
   return (
@@ -129,7 +134,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ activeTool, onSelectTool, onUploadIma
         const isGroup = !!item.submenu;
         // Check if any tool in this group is active
         const isGroupActive = isGroup && item.submenu?.some(sub => sub.id === activeTool);
-        const isActive = activeTool === item.id || isGroupActive;
+        const isActive = item.id === 'snap-toggle' ? snapEnabled : (activeTool === item.id || isGroupActive);
         
         // Dynamic icon based on selection
         const DisplayIcon = isGroup ? getActiveIconForGroup(item.group || '', item.icon) : item.icon;

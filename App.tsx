@@ -67,6 +67,12 @@ function App() {
   const [editingPathId, setEditingPathId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [activePathAnchor, setActivePathAnchor] = useState<{ nodeId: string, index: number } | null>(null);
+  const [pendingImages, setPendingImages] = useState<{ src: string, width: number, height: number }[]>([]);
+  const [pendingImagePos, setPendingImagePos] = useState<Point | null>(null);
+  const [snapEnabled, setSnapEnabled] = useState(false);
+  const [snapGuides, setSnapGuides] = useState<{ vertical: number[], horizontal: number[] }>({ vertical: [], horizontal: [] });
+  const PENDING_SPACING = 16;
+  const SNAP_TOLERANCE = 8;
 
   const [boardName, setBoardName] = useState("Untitled Board");
   
@@ -210,9 +216,226 @@ function App() {
         setIsPenDragging(false);
   };
 
+  const computeSnap = (dx: number, dy: number) => {
+      if (!snapEnabled || selectedNodeIds.length === 0) return { dx: 0, dy: 0, guides: { vertical: [], horizontal: [] } };
+
+      const movingIds = new Set(selectedNodeIds);
+      const moving = nodes.filter(n => movingIds.has(n.id));
+      if (moving.length === 0) return { dx: 0, dy: 0, guides: { vertical: [], horizontal: [] } };
+
+      const others = nodes.filter(n => !movingIds.has(n.id));
+      if (others.length === 0) return { dx: 0, dy: 0, guides: { vertical: [], horizontal: [] } };
+
+      const tolerance = SNAP_TOLERANCE / view.scale;
+
+      const movedBounds = (() => {
+          const xs = moving.flatMap(n => [n.x + dx, n.x + n.width + dx]);
+          const ys = moving.flatMap(n => [n.y + dy, n.y + n.height + dy]);
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+          return {
+              left: minX,
+              right: maxX,
+              top: minY,
+              bottom: maxY,
+              centerX: (minX + maxX) / 2,
+              centerY: (minY + maxY) / 2
+          };
+      })();
+
+      const movingTargetsX = [movedBounds.left, movedBounds.centerX, movedBounds.right];
+      const movingTargetsY = [movedBounds.top, movedBounds.centerY, movedBounds.bottom];
+
+      const candidateX: number[] = [];
+      const candidateY: number[] = [];
+      others.forEach(n => {
+          candidateX.push(n.x, n.x + n.width, n.x + n.width / 2);
+          candidateY.push(n.y, n.y + n.height, n.y + n.height / 2);
+      });
+
+      // Canvas center as soft guide
+      const canvasCenterX = (window.innerWidth - view.offsetX) / view.scale;
+      const canvasCenterY = (window.innerHeight - view.offsetY) / view.scale;
+      candidateX.push(canvasCenterX);
+      candidateY.push(canvasCenterY);
+
+      let bestDx = 0;
+      let bestDy = 0;
+      let bestXGuide: number | null = null;
+      let bestYGuide: number | null = null;
+      let bestXDist = Infinity;
+      let bestYDist = Infinity;
+
+      for (const t of movingTargetsX) {
+          for (const c of candidateX) {
+              const dist = Math.abs(c - t);
+              if (dist <= tolerance && dist < bestXDist) {
+                  bestXDist = dist;
+                  bestDx = c - t;
+                  bestXGuide = c;
+              }
+          }
+      }
+
+      for (const t of movingTargetsY) {
+          for (const c of candidateY) {
+              const dist = Math.abs(c - t);
+              if (dist <= tolerance && dist < bestYDist) {
+                  bestYDist = dist;
+                  bestDy = c - t;
+                  bestYGuide = c;
+              }
+          }
+      }
+
+      // Equal spacing (requires at least 2 neighbors)
+      const guidesX: number[] = bestXGuide !== null ? [bestXGuide] : [];
+      const guidesY: number[] = bestYGuide !== null ? [bestYGuide] : [];
+
+      if (others.length >= 2) {
+          const movedWidth = movedBounds.right - movedBounds.left;
+          const movedHeight = movedBounds.bottom - movedBounds.top;
+
+          const horizontalNeighbors = [...others].sort((a, b) => a.x - b.x);
+          for (let i = 0; i < horizontalNeighbors.length - 1; i++) {
+              const left = horizontalNeighbors[i];
+              const right = horizontalNeighbors[i + 1];
+              const gap = right.x - (left.x + left.width);
+              if (gap <= 0) continue;
+              const desiredLeft = left.x + left.width + gap;
+              const desiredRight = desiredLeft + movedWidth;
+              const spacingDx = desiredLeft - movedBounds.left;
+              const dist = Math.abs(spacingDx);
+              if (dist <= tolerance && dist < bestXDist) {
+                  bestXDist = dist;
+                  bestDx = spacingDx;
+                  guidesX.splice(0, guidesX.length, desiredLeft, desiredRight);
+              }
+          }
+
+          const verticalNeighbors = [...others].sort((a, b) => a.y - b.y);
+          for (let i = 0; i < verticalNeighbors.length - 1; i++) {
+              const top = verticalNeighbors[i];
+              const bottom = verticalNeighbors[i + 1];
+              const gap = bottom.y - (top.y + top.height);
+              if (gap <= 0) continue;
+              const desiredTop = top.y + top.height + gap;
+              const desiredBottom = desiredTop + movedHeight;
+              const spacingDy = desiredTop - movedBounds.top;
+              const dist = Math.abs(spacingDy);
+              if (dist <= tolerance && dist < bestYDist) {
+                  bestYDist = dist;
+                  bestDy = spacingDy;
+                  guidesY.splice(0, guidesY.length, desiredTop, desiredBottom);
+              }
+          }
+      }
+
+      return { dx: bestDx, dy: bestDy, guides: { vertical: guidesX, horizontal: guidesY } };
+  };
+
+  const findFreeOrigin = (center: Point, totalW: number, totalH: number) => {
+      const inflate = 16; // padding from existing nodes
+      const start = { x: center.x - totalW / 2, y: center.y - totalH / 2 };
+
+      const intersects = (ox: number, oy: number) => {
+          const ax1 = ox, ay1 = oy, ax2 = ox + totalW, ay2 = oy + totalH;
+          return nodes.some(n => {
+              const bx1 = n.x - inflate;
+              const by1 = n.y - inflate;
+              const bx2 = n.x + n.width + inflate;
+              const by2 = n.y + n.height + inflate;
+              return !(ax2 <= bx1 || ax1 >= bx2 || ay2 <= by1 || ay1 >= by2);
+          });
+      };
+
+      if (!intersects(start.x, start.y)) return start;
+
+      const step = Math.max(32, Math.min(120, Math.max(totalW, totalH) / 2));
+      const maxIter = 30;
+      for (let i = 1; i <= maxIter; i++) {
+          const dist = step * i;
+          const candidates = [
+              [start.x + dist, start.y],
+              [start.x - dist, start.y],
+              [start.x, start.y + dist],
+              [start.x, start.y - dist],
+              [start.x + dist, start.y + dist],
+              [start.x - dist, start.y + dist],
+              [start.x + dist, start.y - dist],
+              [start.x - dist, start.y - dist],
+          ];
+          for (const [ox, oy] of candidates) {
+              if (!intersects(ox, oy)) return { x: ox, y: oy };
+          }
+      }
+
+      return start;
+  };
+
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.target === canvasRef.current && isLayersOpen) {
         setIsLayersOpen(false);
+    }
+
+    // If there are pending uploads, place ALL images at the click point in a grid
+    if (pendingImages.length > 0 && e.target === canvasRef.current) {
+        e.stopPropagation();
+        const worldPos = screenToWorld(e.clientX, e.clientY);
+
+        const count = pendingImages.length;
+        const cols = Math.ceil(Math.sqrt(count));
+        const rows = Math.ceil(count / cols);
+
+        const colWidths = Array(cols).fill(0);
+        const rowHeights = Array(rows).fill(0);
+        pendingImages.forEach((img, idx) => {
+            const r = Math.floor(idx / cols);
+            const c = idx % cols;
+            colWidths[c] = Math.max(colWidths[c], img.width);
+            rowHeights[r] = Math.max(rowHeights[r], img.height);
+        });
+
+        const totalWidth = colWidths.reduce((a, w) => a + w, 0) + PENDING_SPACING * (cols - 1);
+        const totalHeight = rowHeights.reduce((a, h) => a + h, 0) + PENDING_SPACING * (rows - 1);
+        const origin = findFreeOrigin(worldPos, totalWidth, totalHeight);
+        const originX = origin.x;
+        const originY = origin.y;
+
+        const newNodes: CanvasNode[] = [];
+        let y = originY;
+        for (let r = 0; r < rows; r++) {
+            let x = originX;
+            for (let c = 0; c < cols; c++) {
+                const idx = r * cols + c;
+                const img = pendingImages[idx];
+                if (!img) { x += (colWidths[c] || 0) + PENDING_SPACING; continue; }
+                const id = generateId();
+                newNodes.push({
+                    id,
+                    type: 'image',
+                    x: x + (colWidths[c] - img.width) / 2,
+                    y: y + (rowHeights[r] - img.height) / 2,
+                    width: img.width,
+                    height: img.height,
+                    content: '',
+                    color: '#ffffff',
+                    aspectRatioLocked: true,
+                    src: img.src
+                });
+                x += (colWidths[c] || 0) + PENDING_SPACING;
+            }
+            y += (rowHeights[r] || 0) + PENDING_SPACING;
+        }
+
+        setNodes(prev => [...prev, ...newNodes]);
+        setSelectedNodeIds(newNodes.map(n => n.id));
+        setPendingImages([]);
+        setPendingImagePos(null);
+        setActiveTool('select');
+        return;
     }
 
     if (activeTool === 'select' && e.target === canvasRef.current) {
@@ -363,6 +586,10 @@ function App() {
   const handlePointerMove = (e: React.PointerEvent) => {
     const worldPos = screenToWorld(e.clientX, e.clientY);
     
+    if (pendingImages.length > 0) {
+        setPendingImagePos(worldPos);
+    }
+
     // Pen Tool Logic: Dragging creates handles
     if (activeTool === 'pen') {
         setCurrentPointerPos(worldPos);
@@ -483,17 +710,28 @@ function App() {
         setSelectionBox({ x, y, width, height });
     }
     // 5. Dragging Node(s)
-    else if (isDragging && selectedNodeIds.length > 0) {
+  else if (isDragging && selectedNodeIds.length > 0) {
       const dx = worldPos.x - dragStart.x;
       const dy = worldPos.y - dragStart.y;
-      
+
+      const snap = computeSnap(dx, dy);
+      const totalDx = dx + snap.dx;
+      const totalDy = dy + snap.dy;
+
       setNodes(prev => prev.map(node => {
         if (selectedNodeIds.includes(node.id)) {
-          return { ...node, x: node.x + dx, y: node.y + dy };
+          return { ...node, x: node.x + totalDx, y: node.y + totalDy };
         }
         return node;
       }));
-      setDragStart(worldPos);
+
+      if (snapEnabled) setSnapGuides(snap.guides); else setSnapGuides({ vertical: [], horizontal: [] });
+      setDragStart({ x: worldPos.x + snap.dx, y: worldPos.y + snap.dy });
+    }
+    else {
+        if (snapGuides.vertical.length || snapGuides.horizontal.length) {
+            setSnapGuides({ vertical: [], horizontal: [] });
+        }
     }
   };
 
@@ -502,6 +740,7 @@ function App() {
         setIsPenDragging(false);
         // Do not reset activePenPointIndex here, user might just click again to continue path
     }
+    setSnapGuides({ vertical: [], horizontal: [] });
 
     if (isBoxSelecting && selectionBox) {
         // Find intersecting nodes
@@ -679,6 +918,43 @@ function App() {
 
   const handleUploadImage = () => fileInputRef.current?.click();
 
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length === 0) return;
+
+      const centerWorld = screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+      const maxDim = 320;
+
+      files.forEach((file) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+              const dataUrl = ev.target?.result as string | null;
+              if (!dataUrl) return;
+
+              const img = new Image();
+              img.onload = () => {
+                  let w = img.width;
+                  let h = img.height;
+                  if (w > h && w > maxDim) {
+                      h = Math.round((h / w) * maxDim);
+                      w = maxDim;
+                  } else if (h >= w && h > maxDim) {
+                      w = Math.round((w / h) * maxDim);
+                      h = maxDim;
+                  }
+                  setPendingImages(prev => [...prev, { src: dataUrl, width: w, height: h }]);
+                  setPendingImagePos(pos => pos || centerWorld);
+                  setActiveTool('select');
+              };
+              img.src = dataUrl;
+          };
+          reader.readAsDataURL(file);
+      });
+
+      // Reset input so the same file can be uploaded again
+      e.target.value = '';
+  };
+
   const handleLayerSelect = (id: string, multi: boolean) => {
       if (multi) {
           if (selectedNodeIds.includes(id)) {
@@ -737,7 +1013,7 @@ function App() {
       onPointerLeave={handlePointerUp}
       onPointerMove={handlePointerMove}
     >
-      <input type="file" ref={fileInputRef} onChange={() => {}} accept="image/*" className="hidden" />
+      <input type="file" ref={fileInputRef} onChange={handleImageChange} accept="image/*" multiple className="hidden" />
 
       <LayersPanel 
         nodes={nodes} selectedNodeIds={selectedNodeIds} onSelectNode={handleLayerSelect}
@@ -751,7 +1027,7 @@ function App() {
 
       <div 
         ref={canvasRef}
-        className={`w-full h-full absolute inset-0 ${isPanning ? 'cursor-grab active:cursor-grabbing' : activeTool === 'pen' ? 'cursor-crosshair' : ''}`}
+        className={`w-full h-full absolute inset-0 ${isPanning ? 'cursor-grab active:cursor-grabbing' : (activeTool === 'pen' || pendingImages.length > 0) ? 'cursor-crosshair' : ''}`}
         onPointerDown={handlePointerDown}
         onWheel={(e) => {
             if (e.ctrlKey || e.metaKey) {
@@ -839,7 +1115,7 @@ function App() {
           </>
       )}
 
-      <Toolbar activeTool={activeTool} onSelectTool={setActiveTool} onUploadImage={handleUploadImage} style={layoutShiftStyle} />
+      <Toolbar activeTool={activeTool} onSelectTool={setActiveTool} onUploadImage={handleUploadImage} snapEnabled={snapEnabled} onToggleSnap={() => setSnapEnabled(prev => !prev)} style={layoutShiftStyle} />
 
       <PenToolbar 
         visible={activeTool === 'pen' && (!!editingPathId || penPoints.length > 0 || !!activePathAnchor)}
@@ -850,6 +1126,60 @@ function App() {
         anchorPosition={activeAnchorPosition}
         hasActiveAnchor={!!activePathAnchor}
       />
+
+      {pendingImages.length > 0 && pendingImagePos && (() => {
+          const count = pendingImages.length;
+          const cols = Math.ceil(Math.sqrt(count));
+          const rows = Math.ceil(count / cols);
+          const colWidths = Array(cols).fill(0);
+          const rowHeights = Array(rows).fill(0);
+          pendingImages.forEach((img, idx) => {
+              const r = Math.floor(idx / cols);
+              const c = idx % cols;
+              colWidths[c] = Math.max(colWidths[c], img.width);
+              rowHeights[r] = Math.max(rowHeights[r], img.height);
+          });
+          const totalWidth = colWidths.reduce((a, w) => a + w, 0) + PENDING_SPACING * (cols - 1);
+          const totalHeight = rowHeights.reduce((a, h) => a + h, 0) + PENDING_SPACING * (rows - 1);
+
+          const origin = findFreeOrigin(pendingImagePos, totalWidth, totalHeight);
+          const screenOrigin = worldToScreen(origin.x, origin.y);
+          const previewW = Math.max(24, totalWidth * view.scale);
+          const previewH = Math.max(24, totalHeight * view.scale);
+          return (
+            <div
+              className="pointer-events-none fixed z-[200] border-2 border-blue-500/80 bg-blue-200/25 rounded-sm transition-transform duration-150 ease-out"
+              style={{
+                  width: previewW,
+                  height: previewH,
+                  left: screenOrigin.x,
+              top: screenOrigin.y,
+              boxShadow: '0 8px 24px rgba(37, 99, 235, 0.15)'
+            }}
+          />
+          );
+      })()}
+
+      {snapGuides.vertical.map((x, idx) => {
+          const screen = worldToScreen(x, 0);
+          return (
+            <div
+              key={`v-${idx}-${x}`}
+              className="pointer-events-none fixed z-[180] border-l-2 border-blue-500/80"
+              style={{ left: screen.x, top: 0, height: '100%' }}
+            />
+          );
+      })}
+      {snapGuides.horizontal.map((y, idx) => {
+          const screen = worldToScreen(0, y);
+          return (
+            <div
+              key={`h-${idx}-${y}`}
+              className="pointer-events-none fixed z-[180] border-t-2 border-blue-500/80"
+              style={{ top: screen.y, left: 0, width: '100%' }}
+            />
+          );
+      })}
 
       <div className="fixed bottom-4 z-50 flex items-center bg-white rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 p-1 transition-all duration-300" style={layoutShiftStyle}>
         <button className={`p-2 rounded-full transition-colors ${isLayersOpen ? 'bg-indigo-50 text-indigo-600' : 'hover:bg-slate-50 text-slate-500'}`} onClick={() => setIsLayersOpen(!isLayersOpen)}><IconLayers className="w-4 h-4" /></button>

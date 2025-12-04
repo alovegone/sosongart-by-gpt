@@ -57,6 +57,15 @@ export const IconPlus = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M5 12h14"/><path d="M12 5v14"/></svg>
 );
 
+export const IconMagnet = ({ className }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M4 13v3a6 6 0 0 0 6 6h0a6 6 0 0 0 6-6v-3" />
+    <path d="M4 13a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4" />
+    <path d="M4 9V7" />
+    <path d="M20 9V7" />
+  </svg>
+);
+
 export const IconMinus = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M5 12h14"/></svg>
 );

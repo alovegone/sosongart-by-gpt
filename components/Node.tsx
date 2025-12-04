@@ -348,8 +348,11 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onDou
   if (node.type === 'image') {
       return (
         <div
-            className={`absolute top-0 left-0 group ${isSelected ? 'ring-2 ring-blue-500 shadow-xl' : 'shadow-md hover:shadow-lg'}`}
-            style={{ ...baseStyle, backgroundColor: 'white' }}
+            className={`absolute top-0 left-0 group ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
+            style={{ 
+                ...baseStyle, 
+                backgroundColor: 'white'
+            }}
             onPointerDown={onMouseDown}
         >
             {node.src ? (
@@ -477,6 +480,7 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onDou
   const isPathClosed = node.type === 'path' ? (node.closed !== false && (node.points?.length || 0) > 1) : true;
   // Use fillColor for shape background, defaulting to node.color for legacy support
   const fill = node.type === 'path' && !isPathClosed ? 'none' : (node.fillColor || node.color || '#ffffff');
+  const isFancyFill = typeof fill === 'string' && (fill.includes('gradient') || fill.includes('url('));
   const stroke = node.strokeColor || 'transparent';
   const strokeW = node.strokeWidth || 0;
   const align = node.type === 'path' && !isPathClosed ? 'center' : (node.strokeAlign || 'center');
@@ -591,9 +595,22 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onDou
         For path we render fill via SVG path to avoid CSS clip-path inconsistencies.
       */}
       {node.type === 'path' ? (
-        <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 1, pointerEvents: 'none' }}>
-            <path d={svgPath} fill={isPathClosed ? fill : 'none'} stroke="none" />
-        </svg>
+        isPathClosed && isFancyFill ? (
+          <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 1, pointerEvents: 'none' }}>
+              <defs>
+                  <clipPath id={`clip-path-fill-${node.id}`}>
+                      <path d={svgPath} />
+                  </clipPath>
+              </defs>
+              <foreignObject width="100%" height="100%" clipPath={`url(#clip-path-fill-${node.id})`}>
+                  <div style={{ width: '100%', height: '100%', background: fill, backgroundSize: 'cover', backgroundPosition: 'center' }} />
+              </foreignObject>
+          </svg>
+        ) : (
+          <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 1, pointerEvents: 'none' }}>
+              <path d={svgPath} fill={isPathClosed ? fill : 'none'} stroke="none" />
+          </svg>
+        )
       ) : (
         <div 
           style={{
