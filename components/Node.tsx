@@ -1,22 +1,28 @@
 
-import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { CanvasNode, Point } from '../types';
+import React, { useRef, useEffect, useState } from 'react';
+import { CanvasNode, Point, Tool } from '../types';
 
 interface NodeProps {
   node: CanvasNode;
   isSelected: boolean;
   scale: number;
   onMouseDown: (e: React.PointerEvent) => void;
+  onDoubleClick?: () => void;
   onChange: (id: string, newContent: string) => void;
   onResize: (id: string, width: number, height: number) => void;
   onResizeStart?: (e: React.PointerEvent, handle: string) => void;
   onUpdateNode?: (id: string, updates: Partial<CanvasNode>) => void;
+  activeTool: Tool;
+  penPointMode?: 'corner' | 'smooth';
+  forcePathEdit?: boolean;
+  onSelectAnchor?: (nodeId: string, index: number | null) => void;
 }
 
-const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onChange, onResize, onResizeStart, onUpdateNode }) => {
+const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onDoubleClick, onChange, onResize, onResizeStart, onUpdateNode, activeTool, penPointMode, forcePathEdit, onSelectAnchor }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [activeControl, setActiveControl] = useState<{ index: number, type: 'anchor' | 'left' | 'right' } | null>(null);
+  const pathContainerRef = useRef<HTMLDivElement>(null);
 
   // Sync editing state: Exit edit mode when deselected
   useEffect(() => {
@@ -37,6 +43,21 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
         setIsEditing(true);
     }
   }, [isSelected, node.type, node.content]);
+
+  useEffect(() => {
+    if (forcePathEdit && node.type === 'path' && isSelected) {
+        setIsEditing(true);
+    }
+    if (!forcePathEdit && node.type === 'path' && !isSelected) {
+        setIsEditing(false);
+    }
+  }, [forcePathEdit, node.type, isSelected]);
+
+  useEffect(() => {
+    if (!isEditing && onSelectAnchor) {
+        onSelectAnchor(node.id, null);
+    }
+  }, [isEditing, node.id, onSelectAnchor]);
 
   // Auto-focus when entering edit mode
   useEffect(() => {
@@ -87,6 +108,7 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
   const handleControlPointDown = (e: React.PointerEvent, index: number, type: 'anchor' | 'left' | 'right') => {
       e.stopPropagation();
       e.preventDefault();
+      if (onSelectAnchor) onSelectAnchor(node.id, index);
       setActiveControl({ index, type });
       // Capture pointer to track movement outside the handle
       (e.target as Element).setPointerCapture(e.pointerId);
@@ -184,6 +206,87 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
       newPoints.splice(closestIdx + 1, 0, { x: clickX, y: clickY }); // Insert simple sharp point
       
       onUpdateNode(node.id, { points: newPoints });
+      if (onSelectAnchor) onSelectAnchor(node.id, closestIdx + 1);
+  };
+
+  const handlePathPointerDown = (e: React.PointerEvent) => {
+      if (activeTool === 'pen') {
+          onMouseDown(e);
+          if (!pathContainerRef.current) return;
+          const rect = pathContainerRef.current.getBoundingClientRect();
+          const rx = (e.clientX - rect.left) / rect.width;
+          const ry = (e.clientY - rect.top) / rect.height;
+          insertAnchorAt(rx, ry);
+          return;
+      }
+      onMouseDown(e);
+  };
+
+  const pointToSegmentDistance = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+      const abx = bx - ax;
+      const aby = by - ay;
+      const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / (abx * abx + aby * aby || 1)));
+      const projX = ax + abx * t;
+      const projY = ay + aby * t;
+      return Math.hypot(px - projX, py - projY);
+  };
+
+  const buildSmoothHandles = (points: Point[], index: number, isClosed: boolean): Partial<Point> => {
+      const p = points[index];
+      const prev = isClosed ? points[(index - 1 + points.length) % points.length] : points[index - 1];
+      const next = isClosed ? points[(index + 1) % points.length] : points[index + 1];
+
+      let dirX = 0;
+      let dirY = 0;
+
+      if (prev && next) {
+          dirX = next.x - prev.x;
+          dirY = next.y - prev.y;
+      } else if (next) {
+          dirX = next.x - p.x;
+          dirY = next.y - p.y;
+      } else if (prev) {
+          dirX = p.x - prev.x;
+          dirY = p.y - prev.y;
+      }
+
+      const len = Math.hypot(dirX, dirY) || 1;
+      const normX = dirX / len;
+      const normY = dirY / len;
+      const handleLength = 0.2;
+
+      return { lcx: -normX * handleLength, lcy: -normY * handleLength, rcx: normX * handleLength, rcy: normY * handleLength };
+  };
+
+  const insertAnchorAt = (rx: number, ry: number) => {
+      if (!node.points || !onUpdateNode) return;
+      const points = [...node.points];
+      const isClosed = node.closed !== false && points.length > 1;
+      const segmentCount = isClosed ? points.length : Math.max(points.length - 1, 0);
+      if (segmentCount === 0) return;
+
+      let bestIdx = 0;
+      let bestDist = Infinity;
+
+      for (let i = 0; i < segmentCount; i++) {
+          const a = points[i];
+          const b = points[(i + 1) % points.length];
+          const dist = pointToSegmentDistance(rx, ry, a.x, a.y, b.x, b.y);
+          if (dist < bestDist) {
+              bestDist = dist;
+              bestIdx = i;
+          }
+      }
+
+      const newPoint: Point = { x: rx, y: ry };
+      if (penPointMode === 'smooth') {
+          Object.assign(newPoint, buildSmoothHandles([...points.slice(0, bestIdx + 1), newPoint, ...points.slice(bestIdx + 1)], bestIdx + 1, isClosed));
+      }
+
+      points.splice(bestIdx + 1, 0, newPoint);
+      onUpdateNode(node.id, { points });
+      if (onSelectAnchor) onSelectAnchor(node.id, bestIdx + 1);
+      setIsEditing(true);
   };
 
 
@@ -371,11 +474,12 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
 
   // 5. Shapes (Rectangle, Circle, Triangle, Star, Diamond, Hexagon, Pentagon, Path)
   const isSticky = node.type === 'sticky';
+  const isPathClosed = node.type === 'path' ? (node.closed !== false && (node.points?.length || 0) > 1) : true;
   // Use fillColor for shape background, defaulting to node.color for legacy support
-  const fill = node.fillColor || node.color || '#ffffff';
+  const fill = node.type === 'path' && !isPathClosed ? 'none' : (node.fillColor || node.color || '#ffffff');
   const stroke = node.strokeColor || 'transparent';
   const strokeW = node.strokeWidth || 0;
-  const align = node.strokeAlign || 'center';
+  const align = node.type === 'path' && !isPathClosed ? 'center' : (node.strokeAlign || 'center');
   
   const commonShapeStyle: React.CSSProperties = {
       position: 'absolute',
@@ -443,19 +547,18 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
               d += `L ${curr.x * w} ${curr.y * h} `;
           }
       }
-      // Close path if implicitly closed (though our logic usually keeps it open unless Z is manually handled, 
-      // but for filled shapes we usually want z. For open paths, the user stops drawing.)
-      // Current Pen implementation closes if clicked on start, but we can also just append Z if it's a closed shape style.
-      d += "Z";
+      if (isPathClosed) {
+          d += "Z";
+      }
       svgPath = d;
   }
 
-  // Calculate clip path based on shape type
+  // Calculate clip path based on shape type (non-path shapes only)
   let clipPathValue = undefined;
   if (node.type === 'circle') clipPathValue = 'circle(50% at 50% 50%)';
   else if (node.type === 'triangle') clipPathValue = 'polygon(50% 0%, 0% 100%, 100% 100%)';
   else if (node.type === 'diamond') clipPathValue = 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
-  else if (['star', 'pentagon', 'hexagon', 'path'].includes(node.type)) clipPathValue = `path('${svgPath}')`;
+  else if (['star', 'pentagon', 'hexagon'].includes(node.type)) clipPathValue = `path('${svgPath}')`;
 
   const scaleCorrection = 1/scale; // Make handles constant size regardless of zoom
 
@@ -463,10 +566,12 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
     <div
       className={`absolute top-0 left-0 flex items-center justify-center ${isSelected && !isEditing ? 'ring-1 ring-blue-500 z-10' : ''} ${isSticky ? 'shadow-md' : ''}`}
       style={{ ...baseStyle }}
-      onPointerDown={onMouseDown}
+      ref={node.type === 'path' ? pathContainerRef : undefined}
+      onPointerDown={node.type === 'path' ? handlePathPointerDown : onMouseDown}
       onDoubleClick={(e) => {
+          e.stopPropagation();
+          if (onDoubleClick) onDoubleClick();
           if (node.type === 'path') {
-              e.stopPropagation();
               setIsEditing(true);
           }
       }}
@@ -483,18 +588,24 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
 
       {/* 
         Layer 2: Fill 
-        Use Div with ClipPath for perfect gradient/image support.
+        For path we render fill via SVG path to avoid CSS clip-path inconsistencies.
       */}
-      <div 
-        style={{
-            ...commonShapeStyle,
-            background: fill,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            zIndex: 1,
-            clipPath: clipPathValue
-        }}
-      />
+      {node.type === 'path' ? (
+        <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 1, pointerEvents: 'none' }}>
+            <path d={svgPath} fill={isPathClosed ? fill : 'none'} stroke="none" />
+        </svg>
+      ) : (
+        <div 
+          style={{
+              ...commonShapeStyle,
+              background: fill,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              zIndex: 1,
+              clipPath: clipPathValue
+          }}
+        />
+      )}
 
       {/* 
         Layer 3: Stroke (Center or Inside)
@@ -502,7 +613,7 @@ const Node: React.FC<NodeProps> = ({ node, isSelected, scale, onMouseDown, onCha
       */}
       {strokeW > 0 && align !== 'outside' && (
           <svg width="100%" height="100%" style={{ position: 'absolute', overflow: 'visible', zIndex: 2, pointerEvents: 'none' }}>
-              {align === 'inside' ? (
+              {align === 'inside' && node.type !== 'path' ? (
                   <>
                     <defs>
                         <clipPath id={`clip-${node.id}`}>

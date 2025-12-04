@@ -21,6 +21,7 @@ export interface CanvasNode {
   width: number;
   height: number;
   content: string;
+  closed?: boolean; // For paths: whether the shape is closed (eligible for fill)
   
   // Basic Color (used for Shapes/Sticky background, or Text color if basic)
   color: string;

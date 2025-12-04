@@ -5,6 +5,7 @@ import Toolbar from './components/Toolbar';
 import TextToolbar from './components/TextToolbar';
 import ShapeToolbar from './components/ShapeToolbar';
 import LayersPanel from './components/LayersPanel';
+import PenToolbar from './components/PenToolbar';
 import { IconMinus, IconPlus, IconGrid, IconLayers } from './components/Icons';
 import { CanvasNode, NodeType, Point, Tool, ViewState } from './types';
 import { INITIAL_NODES, COLORS, INITIAL_SCALE, MIN_SCALE, MAX_SCALE } from './constants';
@@ -62,6 +63,10 @@ function App() {
   const [currentPointerPos, setCurrentPointerPos] = useState<Point | null>(null);
   const [isPenDragging, setIsPenDragging] = useState(false);
   const [activePenPointIndex, setActivePenPointIndex] = useState<number | null>(null);
+  const [penPointMode, setPenPointMode] = useState<'corner' | 'smooth'>('corner');
+  const [editingPathId, setEditingPathId] = useState<string | null>(null);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [activePathAnchor, setActivePathAnchor] = useState<{ nodeId: string, index: number } | null>(null);
 
   const [boardName, setBoardName] = useState("Untitled Board");
   
@@ -94,13 +99,48 @@ function App() {
       
       // Enter to finish path
       if (e.key === 'Enter' && activeTool === 'pen' && penPoints.length > 1) {
-          finishPenPath();
+          finishPenPath(false);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedNodeIds, activeTool, penPoints]);
+
+  useEffect(() => {
+    if (activeTool !== 'pen') {
+        setPenPoints([]);
+        setCurrentPointerPos(null);
+        setIsPenDragging(false);
+        setActivePenPointIndex(null);
+        if (activeTool !== 'select') {
+            setEditingNodeId(null);
+        }
+    }
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (activeTool === 'pen') {
+        // If a path is selected, enter edit mode automatically
+        const lastSelected = selectedNodeIds.length > 0 ? nodes.find(n => n.id === selectedNodeIds[selectedNodeIds.length - 1]) : null;
+        if (lastSelected && lastSelected.type === 'path') {
+            setEditingPathId(lastSelected.id);
+            setEditingNodeId(lastSelected.id);
+            if (!activePathAnchor && lastSelected.points && lastSelected.points.length > 0) {
+                setActivePathAnchor({ nodeId: lastSelected.id, index: 0 });
+            }
+        }
+    } else {
+        setEditingPathId(null);
+        setActivePathAnchor(null);
+    }
+  }, [activeTool, selectedNodeIds]);
+
+  useEffect(() => {
+    if (activePathAnchor && !selectedNodeIds.includes(activePathAnchor.nodeId)) {
+        setActivePathAnchor(null);
+    }
+  }, [selectedNodeIds, activePathAnchor]);
 
   const screenToWorld = useCallback((screenX: number, screenY: number): Point => {
     return {
@@ -116,9 +156,11 @@ function App() {
     };
   }, [view]);
 
-  const finishPenPath = () => {
+  const finishPenPath = (forceClose?: boolean) => {
         if (penPoints.length < 2) {
             setPenPoints([]);
+            setActivePenPointIndex(null);
+            setIsPenDragging(false);
             return;
         }
         
@@ -131,6 +173,8 @@ function App() {
         // Ensure non-zero width/height
         const width = Math.max(1, maxX - minX);
         const height = Math.max(1, maxY - minY);
+
+        const shouldClose = forceClose === true;
 
         const id = generateId();
         const newNode: CanvasNode = {
@@ -145,6 +189,7 @@ function App() {
             fillColor: '#dbeafe',
             strokeColor: '#3b82f6',
             strokeWidth: 2,
+            closed: shouldClose,
             // Normalize points AND their handles to 0-1 range relative to bounding box
             points: penPoints.map(p => ({
                 x: (p.x - minX) / width,
@@ -158,13 +203,22 @@ function App() {
         
         setNodes(prev => [...prev, newNode]);
         setSelectedNodeIds([id]);
+        setEditingPathId(id);
+        setActivePathAnchor({ nodeId: id, index: penPoints.length - 1 });
         setPenPoints([]);
         setActivePenPointIndex(null);
+        setIsPenDragging(false);
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.target === canvasRef.current && isLayersOpen) {
         setIsLayersOpen(false);
+    }
+
+    if (activeTool === 'select' && e.target === canvasRef.current) {
+        setEditingPathId(null);
+        setEditingNodeId(null);
+        setActivePathAnchor(null);
     }
 
     const worldPos = screenToWorld(e.clientX, e.clientY);
@@ -179,6 +233,24 @@ function App() {
     // 2. Pen Tool (Advanced)
     if (activeTool === 'pen') {
         e.stopPropagation();
+
+        // If editing an existing path, avoid starting a new one from blank canvas
+        if (editingPathId) {
+            return;
+        }
+        
+        // Right click (or long-press via context) ends open path without closing
+        if (e.button === 2) {
+            e.preventDefault();
+            finishPenPath(false);
+            return;
+        }
+
+        // Double click ends the current path without closing (Photoshop style)
+        if (e.detail === 2 && penPoints.length > 1) {
+            finishPenPath(false);
+            return;
+        }
         
         // A. Check if clicking start point to close
         if (penPoints.length > 2) {
@@ -187,7 +259,7 @@ function App() {
             const threshold = 10 / view.scale;
 
             if (dist < threshold) {
-                finishPenPath();
+                finishPenPath(true);
                 return;
             }
         }
@@ -213,6 +285,7 @@ function App() {
 
     // 4. Creating New Nodes (Shapes, Text, etc.)
     if (['rectangle', 'circle', 'triangle', 'star', 'diamond', 'hexagon', 'pentagon', 'arrow', 'line', 'pencil', 'text'].includes(activeTool)) {
+        if (editingNodeId) return; // Editing mode: do not create new nodes
         setIsDrawing(true);
         setDrawingStart(worldPos);
         const id = generateId();
@@ -460,6 +533,19 @@ function App() {
 
   const handleNodePointerDown = (e: React.PointerEvent, nodeId: string) => {
     e.stopPropagation();
+    const node = nodes.find(n => n.id === nodeId);
+    if (activeTool === 'pen' && node?.type === 'path') {
+        setSelectedNodeIds([nodeId]);
+        setEditingPathId(nodeId);
+        setEditingNodeId(nodeId);
+        if (node.points && node.points.length > 0) {
+            setActivePathAnchor({ nodeId, index: 0 });
+        }
+        setPenPoints([]);
+        setCurrentPointerPos(null);
+        setActivePenPointIndex(null);
+        return;
+    }
     if (activeTool !== 'select') return;
     
     // Multi-select Logic
@@ -496,6 +582,95 @@ function App() {
       setNodes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
   };
 
+  const buildSmoothHandles = (points: Point[], index: number, isClosed: boolean): Partial<Point> => {
+      const p = points[index];
+      const prev = isClosed ? points[(index - 1 + points.length) % points.length] : points[index - 1];
+      const next = isClosed ? points[(index + 1) % points.length] : points[index + 1];
+
+      let dirX = 0;
+      let dirY = 0;
+
+      if (prev && next) {
+          dirX = next.x - prev.x;
+          dirY = next.y - prev.y;
+      } else if (next) {
+          dirX = next.x - p.x;
+          dirY = next.y - p.y;
+      } else if (prev) {
+          dirX = p.x - prev.x;
+          dirY = p.y - prev.y;
+      }
+
+      const len = Math.hypot(dirX, dirY) || 1;
+      const normX = dirX / len;
+      const normY = dirY / len;
+      const handleLength = 0.2; // relative to bounding box
+
+      return { lcx: -normX * handleLength, lcy: -normY * handleLength, rcx: normX * handleLength, rcy: normY * handleLength };
+  };
+
+  const handleSelectAnchor = (nodeId: string, index: number | null) => {
+      if (index === null) {
+          setActivePathAnchor(null);
+          return;
+      }
+      setActivePathAnchor({ nodeId, index });
+      setEditingPathId(nodeId);
+      // When selecting an anchor, sync toolbar mode to the anchor type
+      const node = nodes.find(n => n.id === nodeId);
+      if (node?.type === 'path' && node.points && node.points[index]) {
+          const p = node.points[index];
+          const isSmooth = p.lcx !== undefined || p.rcx !== undefined;
+          setPenPointMode(isSmooth ? 'smooth' : 'corner');
+      }
+  };
+
+  const convertAnchorType = (mode: 'corner' | 'smooth') => {
+      if (!activePathAnchor) return;
+      const { nodeId, index } = activePathAnchor;
+      setNodes(prev => prev.map(n => {
+          if (n.id !== nodeId || n.type !== 'path' || !n.points || !n.points[index]) return n;
+          const isClosed = n.closed !== false && n.points.length > 1;
+          const points = [...n.points];
+          const p = { ...points[index] };
+
+          if (mode === 'corner') {
+              delete p.lcx; delete p.lcy; delete p.rcx; delete p.rcy;
+          } else {
+              Object.assign(p, buildSmoothHandles(points, index, isClosed));
+          }
+
+          points[index] = p;
+          return { ...n, points };
+      }));
+  };
+
+  const handlePenModeChange = (mode: 'corner' | 'smooth') => {
+      setPenPointMode(mode);
+      // If currently selecting an anchor, also convert it immediately to match the chosen mode
+      if (activePathAnchor) {
+          convertAnchorType(mode);
+      }
+  };
+
+  const handleNodeDoubleClick = (nodeId: string) => {
+      const node = nodes.find(n => n.id === nodeId);
+      if (!node) return;
+      setSelectedNodeIds([nodeId]);
+      setEditingNodeId(nodeId);
+
+      if (node.type === 'path') {
+          setActiveTool('pen');
+          setEditingPathId(nodeId);
+          if (node.points && node.points.length > 0) {
+              setActivePathAnchor({ nodeId, index: 0 });
+          }
+      } else {
+          // Non-path shapes: stay in select mode for editing/resizing only
+          setActiveTool('select');
+      }
+  };
+
   const handleResizeNode = (id: string, width: number, height: number) => {
     if (!resizeState) { 
         setNodes(prev => prev.map(n => n.id === id ? { ...n, width, height } : n));
@@ -520,6 +695,16 @@ function App() {
   const primarySelectedNode = selectedNodeIds.length > 0 ? nodes.find(n => n.id === selectedNodeIds[selectedNodeIds.length - 1]) : null;
   const primaryNodeScreenPos = primarySelectedNode ? worldToScreen(primarySelectedNode.x, primarySelectedNode.y) : null;
   
+  const activeAnchorPosition = (() => {
+      if (!activePathAnchor) return null;
+      const node = nodes.find(n => n.id === activePathAnchor.nodeId && n.type === 'path');
+      if (!node || !node.points || !node.points[activePathAnchor.index]) return null;
+      const p = node.points[activePathAnchor.index];
+      const worldX = node.x + (p.x * node.width);
+      const worldY = node.y + (p.y * node.height);
+      return worldToScreen(worldX, worldY);
+  })();
+
   const layoutShiftStyle = { left: isLayersOpen ? `${SIDEBAR_WIDTH + 16}px` : '16px', transition: 'left 0.3s ease-in-out' };
 
   // Calculate Pen Snap State
@@ -598,6 +783,11 @@ function App() {
               onResize={handleResizeNode}
               onResizeStart={(e, handle) => handleResizeStart(e, handle, node.id)}
               onUpdateNode={updateNodePoints}
+              activeTool={activeTool}
+              penPointMode={penPointMode}
+              forcePathEdit={editingPathId === node.id}
+              onSelectAnchor={handleSelectAnchor}
+              onDoubleClick={() => handleNodeDoubleClick(node.id)}
             />
           ))}
 
@@ -650,6 +840,16 @@ function App() {
       )}
 
       <Toolbar activeTool={activeTool} onSelectTool={setActiveTool} onUploadImage={handleUploadImage} style={layoutShiftStyle} />
+
+      <PenToolbar 
+        visible={activeTool === 'pen' && (!!editingPathId || penPoints.length > 0 || !!activePathAnchor)}
+        mode={penPointMode}
+        onModeChange={handlePenModeChange}
+        onCorner={() => convertAnchorType('corner')}
+        onSmooth={() => convertAnchorType('smooth')}
+        anchorPosition={activeAnchorPosition}
+        hasActiveAnchor={!!activePathAnchor}
+      />
 
       <div className="fixed bottom-4 z-50 flex items-center bg-white rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-100 p-1 transition-all duration-300" style={layoutShiftStyle}>
         <button className={`p-2 rounded-full transition-colors ${isLayersOpen ? 'bg-indigo-50 text-indigo-600' : 'hover:bg-slate-50 text-slate-500'}`} onClick={() => setIsLayersOpen(!isLayersOpen)}><IconLayers className="w-4 h-4" /></button>
